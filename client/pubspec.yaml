@@ -1,0 +1,30 @@
+name: jump_viewer
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.8.5+16
+
+environment:
+  sdk: ^3.13.4
+
+dependencies:
+  crypto: ^3.0.7
+  flutter:
+    sdk: flutter
+  flutter_pcm_sound: ^3.3.3
+  flutter_webrtc: ^1.6.2+hotfix.3
+  shared_preferences: ^2.5.5
+  wakelock_plus: ^1.8.0
+  web_socket_channel: ^3.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+dependency_overrides:
+  # compileSdk bump, see third_party/flutter_pcm_sound/VENDORED.md
+  flutter_pcm_sound:
+    path: third_party/flutter_pcm_sound

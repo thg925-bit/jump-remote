@@ -1,0 +1,8 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - third_party/** # vendored plugin code
+    - build/**
+    - android/**
+    - ios/**

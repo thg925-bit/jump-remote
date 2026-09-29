@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Jump Host</string>
+	<key>CFBundleExecutable</key>
+	<string>JumpHost</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.jihun.jumphost</string>
+	<key>CFBundleName</key>
+	<string>JumpHost</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.8.6</string>
+	<key>CFBundleVersion</key>
+	<string>14</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>iPad/안드로이드 기기가 같은 네트워크에서 이 Mac에 접속하려면 필요합니다.</string>
+</dict>
+</plist>

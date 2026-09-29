@@ -1,0 +1,6 @@
+.build/
+host/build/
+.DS_Store
+*.xcuserstate
+dist/
+client/android/build/

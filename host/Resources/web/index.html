@@ -1,0 +1,2093 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jump">
+<meta name="theme-color" content="#0b0d10">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Jump Viewer</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #161a20;
+    --line: #2a313b;
+    --text: #e7ebf0;
+    --muted: #8a94a3;
+    --accent: #4f8cff;
+    --danger: #ff5d5d;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { touch-action: manipulation; } /* no double-tap zoom */
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  body { overflow: hidden; overscroll-behavior: none; }
+
+  #connect { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
+  #connect form { width: min(360px, 100%); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 22px; display: grid; gap: 12px; }
+  #connect h1 { margin: 0 0 4px; font-size: 20px; }
+  #connect label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+  #connect input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; }
+  #connect button { font: inherit; font-weight: 600; color: #fff; background: var(--accent); border: 0;
+    border-radius: 8px; padding: 11px; cursor: pointer; }
+  #connect button:disabled { opacity: .6; }
+  #status { min-height: 1.4em; color: var(--muted); font-size: 13px; }
+  #status.error { color: var(--danger); }
+
+  #viewer { position: fixed; inset: 0; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none; }
+  #viewer.active { display: block; }
+  #stage { position: absolute; inset: 0; transform-origin: 0 0; pointer-events: none; }
+  #screen { width: 100%; height: 100%; object-fit: contain; background: #000; pointer-events: none; }
+  #surface { position: absolute; inset: 0; cursor: default; }
+  /* A mouse user sees the Mac's own cursor (drawn by us); hide the local one on top of it. */
+  #surface.mac-cursor { cursor: none; }
+
+  /* Password field with a show/hide eye. */
+  .pw { position: relative; display: grid; }
+  .pw input { width: 100%; padding-right: 44px !important; }
+  #connect .pw .eye, #sheet .pw .eye { position: absolute; top: 50%; right: 3px; transform: translateY(-50%);
+    width: 38px; height: 38px; padding: 0; display: grid; place-items: center; background: transparent;
+    color: var(--muted); border: 0; border-radius: 8px; cursor: pointer; }
+  .pw .eye svg { width: 20px; height: 20px; }
+  .pw .eye[aria-pressed="true"] { color: var(--accent); }
+
+  /* Placed by layoutViewer(): a grid of equal tiles docked to the left or right edge (columns) or
+     the top (rows); in a black bar beside/above the video when it fits there. */
+  #toolbar { position: absolute; display: grid; gap: 2px; place-content: center; box-sizing: border-box;
+    background: rgba(22,26,32,.66); border: 1px solid rgba(255,255,255,.12); border-radius: 14px;
+    backdrop-filter: blur(10px) saturate(1.2); -webkit-backdrop-filter: blur(10px) saturate(1.2); }
+  #toolbar.snap { transition: left .18s cubic-bezier(.2,.8,.2,1), top .18s cubic-bezier(.2,.8,.2,1); }
+  #toolbar .tile { width: var(--tile, 56px); height: var(--tile, 56px); padding: calc(5px * var(--tile-scale, 1)) 2px calc(4px * var(--tile-scale, 1)); display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 3px; border: 0; border-radius: 10px; background: transparent; color: var(--text);
+    font: inherit; cursor: pointer; }
+  #toolbar .tile i { font-style: normal; font-size: calc(18px * var(--tile-scale, 1)); line-height: 1; }
+  /* One or two lines that never wrap; fitLabel() shrinks a long one to the tile's width. */
+  #toolbar .tile span { display: block; max-width: 100%; overflow: hidden; font-size: calc(10.5px * var(--tile-scale, 1)); line-height: 1.15;
+    white-space: pre; text-align: center; opacity: .8; }
+  #toolbar .tile.on { background: var(--accent); color: #fff; }
+  /* Icon only when space is tight (the keyboard is up). */
+  #toolbar.compact .tile { padding: 0; }
+  #toolbar.compact .tile span { display: none; }
+  #toolbar.compact .tile i { font-size: calc(20px * var(--tile-scale, 1)); }
+  #toolbar .tile.on span { opacity: 1; }
+  #toolbar.moving { outline: 2px solid var(--accent); outline-offset: 2px; background: rgba(22,26,32,.92); }
+  #safeProbe { position: absolute; visibility: hidden; pointer-events: none; padding: env(safe-area-inset-top)
+    env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+  #stats { position: absolute; left: max(8px, env(safe-area-inset-left)); bottom: max(8px, env(safe-area-inset-bottom));
+    padding: 6px 9px; font: 12px/1.35 ui-monospace, Menlo, monospace; background: rgba(0,0,0,.6);
+    border-radius: 7px; white-space: pre; display: none; pointer-events: none; }
+  #stats.show { display: block; }
+
+  /* Settings sheet: outside #viewer so its inputs get normal touch, selection and typing. */
+  #sheet { position: fixed; inset: 0; display: none; padding: 12px 16px; background: rgba(0,0,0,.5);
+    overflow-y: auto; overscroll-behavior: contain; }
+  #sheet.show { display: grid; }
+  #sheet form { margin: auto; width: min(340px, 100%); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px 16px; display: grid; gap: 9px; }
+  #sheet h2 { margin: 0; font-size: 17px; }
+  #sheet h3 { margin: 4px 0 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+  #sheet .row { display: flex; justify-content: space-between; align-items: center; }
+  #sheet input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+  /* 16px keeps iOS from zooming the page when a field is focused. */
+  #sheet .pw input { font: inherit; font-size: 16px; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; }
+  #pwStatus { min-height: 1.3em; font-size: 13px; color: var(--muted); }
+  #pwStatus.error { color: var(--danger); }
+  #pwStatus.ok { color: #46c46e; }
+  #sheet .actions { display: flex; gap: 8px; justify-content: flex-end; }
+  #sheet button { font: inherit; font-weight: 600; color: #fff; background: var(--accent); border: 0;
+    border-radius: 8px; padding: 9px 16px; cursor: pointer; }
+  #sheet button.secondary { background: var(--line); color: var(--text); }
+  #sheet button:disabled { opacity: .6; }
+
+  #cursor { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%;
+    border: 2px solid #fff; box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 0 8px rgba(0,0,0,.4);
+    pointer-events: none; display: none; }
+  #cursor.show { display: block; }
+  /* The Mac's real cursor shape, drawn here so it moves at display rate, not video rate. */
+  #cursor.image { width: auto; height: auto; margin: 0; border: 0; border-radius: 0; box-shadow: none; display: block; }
+  #cursor img { display: none; }
+  #cursor.image img { display: block; }
+  /* Size and position come from layoutViewer(). */
+  #tp { position: absolute; width: 128px; height: 128px; border-radius: 50%; display: none; touch-action: none;
+    background: rgba(255,255,255,.06); border: 1.5px solid rgba(255,255,255,.22);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 6px 24px rgba(0,0,0,.25); user-select: none; -webkit-user-select: none; }
+  #tp.show { display: block; }
+  #tpNub { position: absolute; left: 32%; top: 32%; width: 36%; height: 36%;
+    border-radius: 50%; background: rgba(255,255,255,.92); pointer-events: none;
+    box-shadow: 0 2px 10px rgba(0,0,0,.35); transition: background .12s, box-shadow .12s; }
+  /* In the square's corner, outside the circle's touch area. */
+  #tpHandle { position: absolute; right: -4px; top: -4px; width: 28px; height: 28px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 15px; color: rgba(255,255,255,.75);
+    background: rgba(22,26,32,.9); border: 1px solid rgba(255,255,255,.25); touch-action: none; }
+  #tp.held #tpNub { box-shadow: 0 0 0 3px var(--accent), 0 2px 10px rgba(0,0,0,.35); }
+  #tp.dragging #tpNub { background: var(--accent); }
+  /* Top, not bottom: a focused field under the keyboard makes iOS pan the whole page. */
+  #kbd { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0;
+    font-size: 16px; resize: none; }
+
+  /* Above the on-screen keyboard: how it types (바로 = straight onto the Mac, 입력창 = write here
+     first, then 전송), with extra keys or the compose box. Outside #viewer so text can be edited. */
+  #kbar { position: fixed; left: 0; right: 0; top: 0; display: none; align-items: flex-end; gap: 6px;
+    padding: 5px max(6px, env(safe-area-inset-right)) 5px max(6px, env(safe-area-inset-left));
+    background: rgba(22,26,32,.97); border-top: 1px solid var(--line); }
+  #kbar.show { display: flex; }
+  #kbar .seg { flex: none; display: flex; padding: 2px; background: #232932; border-radius: 9px; }
+  #kbar .seg button { font: inherit; font-size: 13px; color: var(--muted); background: transparent; border: 0;
+    border-radius: 7px; padding: 8px 9px; }
+  #kbar .seg button.on { background: var(--accent); color: #fff; }
+  #kbarKeys { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  #kbarKeys::-webkit-scrollbar { display: none; }
+  #kbar button.key, #kbar button.act { flex: none; font: inherit; font-size: 15px; color: #fff; background: #232932;
+    border: 0; border-radius: 8px; padding: 8px 12px; }
+  #kbar button.act.primary { background: var(--accent); font-weight: 600; }
+  #kbar button.act:disabled { opacity: .4; }
+  #kbarPreview { flex: none; color: var(--text); font-size: 15px; padding: 0 2px; white-space: nowrap; }
+  #kbarPreview:empty { display: none; }
+  #composeInput { flex: 1; min-width: 0; font: inherit; font-size: 16px; line-height: 1.35; color: var(--text);
+    background: var(--bg); border: 0; border-radius: 8px; padding: 8px 10px; resize: none; height: 38px; }
+  #kbar.direct #composeInput, #kbar.direct .act { display: none; }
+  #kbar.compose #kbarKeys { display: none; }
+  #compose { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 6px 12px;
+    background: rgba(22,26,32,.9); border: 1px solid var(--line); border-radius: 8px; display: none; }
+  #compose.show { display: block; }
+  #banner { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 12px 18px;
+    background: rgba(22,26,32,.92); border: 1px solid var(--line); border-radius: 10px; display: none; }
+  #banner.show { display: block; }
+  #toast { position: absolute; left: 50%; top: max(12px, env(safe-area-inset-top)); transform: translateX(-50%);
+    padding: 7px 14px; font-size: 13px; background: rgba(22,26,32,.92); border: 1px solid var(--line); border-radius: 999px;
+    display: none; pointer-events: none; white-space: nowrap; }
+  #toast.show { display: block; }
+  #updateBtn { position: fixed; left: 50%; top: max(10px, env(safe-area-inset-top)); transform: translateX(-50%);
+    display: none; font: inherit; font-size: 13px; font-weight: 600; color: #fff; background: var(--accent);
+    border: 0; border-radius: 999px; padding: 8px 16px; box-shadow: 0 4px 14px rgba(0,0,0,.35); cursor: pointer; }
+  #updateBtn.show { display: block; }
+</style>
+</head>
+<body>
+
+<div id="connect">
+  <form id="form" autocomplete="on">
+    <h1>Jump Viewer</h1>
+    <label><span id="hostLabel">Mac 주소</span> <input id="host" name="host" inputmode="url" autocapitalize="off" spellcheck="false" required></label>
+    <label>비밀번호 <span class="pw"><input id="password" name="password" type="password" autocapitalize="off" spellcheck="false" required><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span></label>
+    <button id="go" type="submit">연결</button>
+    <div id="status"></div>
+  </form>
+</div>
+
+<div id="viewer">
+  <!-- Zoom/pan transforms the stage; the surface above it takes the input. -->
+  <div id="stage">
+    <video id="screen" autoplay playsinline muted></video>
+    <div id="cursor"><img id="cursorImg" alt=""></div>
+  </div>
+  <div id="surface"></div>
+  <div id="toolbar">
+    <button id="btnMouse" class="tile" type="button"><i>🖱</i><span>오른쪽</span></button>
+    <button id="btnSpeed" class="tile" type="button"><i>🎚</i><span>보통</span></button>
+    <button id="btnDisplay" class="tile" type="button" style="display:none"><i>🖥</i><span>모니터</span></button>
+    <button id="btnFill" class="tile" type="button"><i>⤢</i><span>맞춤</span></button>
+    <button id="btnKbd" class="tile" type="button"><i>⌨</i><span>키보드</span></button>
+    <button id="btnSound" class="tile" type="button"><i>🔊</i><span>재생</span></button>
+    <button id="btnSettings" class="tile" type="button"><i>⚙</i><span>설정</span></button>
+    <button id="btnFull" class="tile" type="button"><i>⛶</i><span>전체화면</span></button>
+    <button id="btnClose" class="tile" type="button"><i>✕</i><span>끊기</span></button>
+  </div>
+  <div id="stats"></div>
+  <div id="tp"><div id="tpNub"></div><div id="tpHandle" title="끌어서 옮기기">✥</div></div>
+  <div id="safeProbe"></div>
+  <div id="compose"></div>
+  <div id="banner"></div>
+  <div id="toast"></div>
+  <textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+</div>
+
+<button id="updateBtn" type="button">새 버전이 있습니다 · 적용</button>
+
+<div id="kbar" class="direct">
+  <div class="seg" role="group" aria-label="키보드 입력 방식">
+    <button type="button" data-mode="direct">바로</button><button type="button" data-mode="compose">입력창</button>
+  </div>
+  <div id="kbarKeys">
+    <span id="kbarPreview"></span>
+    <button class="key" type="button" data-key="Escape">esc</button>
+    <button class="key" type="button" data-key="Tab">tab</button>
+    <button class="key" type="button" data-key="ArrowLeft">←</button>
+    <button class="key" type="button" data-key="ArrowUp">↑</button>
+    <button class="key" type="button" data-key="ArrowDown">↓</button>
+    <button class="key" type="button" data-key="ArrowRight">→</button>
+    <button class="key" type="button" data-key="Backspace">⌫</button>
+    <button class="key" type="button" data-key="Enter">⏎</button>
+  </div>
+  <textarea id="composeInput" rows="1" placeholder="여기에 쓰고 전송 → Mac 커서 위치에 입력" spellcheck="false"></textarea>
+  <button id="composeUndo" class="act" type="button" aria-label="방금 보낸 글 지우기" title="방금 보낸 글 지우기" disabled>✕</button>
+  <button id="composeSend" class="act primary" type="button" disabled>전송</button>
+  <button id="composeEnter" class="act" type="button" aria-label="Enter">⏎</button>
+</div>
+
+<div id="sheet" role="dialog" aria-label="설정">
+  <form id="sheetForm" autocomplete="off">
+    <h2>설정</h2>
+    <label class="row"><span>통계 표시</span><input id="optStats" type="checkbox"></label>
+    <label class="row"><span>클립보드 공유 (복사·붙여넣기)</span><input id="optClip" type="checkbox"></label>
+    <label class="row"><span>Ctrl을 ⌘처럼 (윈도우 키보드)</span><input id="optCtrlCmd" type="checkbox"></label>
+    <h3>Mac 비밀번호 변경</h3>
+    <span class="pw"><input id="pwCurrent" type="password" placeholder="현재 비밀번호" autocomplete="current-password" autocapitalize="off" spellcheck="false"><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span>
+    <span class="pw"><input id="pwNew" type="password" placeholder="새 비밀번호 (8자 이상)" autocomplete="new-password" autocapitalize="off" spellcheck="false"><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span>
+    <span class="pw"><input id="pwConfirm" type="password" placeholder="새 비밀번호 확인" autocomplete="new-password" autocapitalize="off" spellcheck="false"><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span>
+    <div id="pwStatus"></div>
+    <div class="actions">
+      <button id="sheetClose" class="secondary" type="button">닫기</button>
+      <button id="pwSave" type="submit">비밀번호 변경</button>
+    </div>
+  </form>
+</div>
+
+<script>
+"use strict";
+
+// ---------- SHA-256 / HMAC (pure JS: crypto.subtle is unavailable over plain http on a LAN IP) ----------
+const SHA = (() => {
+  const primes = [];
+  for (let p = 2; primes.length < 64; p++) {
+    let prime = true;
+    for (let d = 2; d * d <= p; d++) if (p % d === 0) { prime = false; break; }
+    if (prime) primes.push(p);
+  }
+  const frac = (x) => ((x - Math.floor(x)) * 2 ** 32) >>> 0;
+  const K = Uint32Array.from(primes, (p) => frac(Math.cbrt(p)));
+  const H0 = Uint32Array.from(primes.slice(0, 8), (p) => frac(Math.sqrt(p)));
+  const ror = (x, n) => (x >>> n) | (x << (32 - n));
+
+  function sha256(bytes) {
+    const len = bytes.length;
+    const padded = new Uint8Array(((len + 9 + 63) >> 6) << 6);
+    padded.set(bytes);
+    padded[len] = 0x80;
+    const view = new DataView(padded.buffer);
+    view.setUint32(padded.length - 8, Math.floor(len / 0x20000000));
+    view.setUint32(padded.length - 4, (len << 3) >>> 0);
+    const H = H0.slice();
+    const W = new Uint32Array(64);
+    for (let off = 0; off < padded.length; off += 64) {
+      for (let i = 0; i < 16; i++) W[i] = view.getUint32(off + i * 4);
+      for (let i = 16; i < 64; i++) {
+        const a = W[i - 15], b = W[i - 2];
+        W[i] = (W[i - 16] + (ror(a, 7) ^ ror(a, 18) ^ (a >>> 3)) + W[i - 7] + (ror(b, 17) ^ ror(b, 19) ^ (b >>> 10))) | 0;
+      }
+      let [a, b, c, d, e, f, g, h] = H;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (h + (ror(e, 6) ^ ror(e, 11) ^ ror(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + W[i]) | 0;
+        const t2 = ((ror(a, 2) ^ ror(a, 13) ^ ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+    }
+    const out = new Uint8Array(32);
+    const outView = new DataView(out.buffer);
+    H.forEach((word, i) => outView.setUint32(i * 4, word));
+    return out;
+  }
+
+  function hmac(key, message) {
+    if (key.length > 64) key = sha256(key);
+    const block = new Uint8Array(64);
+    block.set(key);
+    const inner = new Uint8Array(64 + message.length);
+    const outer = new Uint8Array(64 + 32);
+    for (let i = 0; i < 64; i++) { inner[i] = block[i] ^ 0x36; outer[i] = block[i] ^ 0x5c; }
+    inner.set(message, 64);
+    outer.set(sha256(inner), 64);
+    return sha256(outer);
+  }
+
+  return { sha256, hmac };
+})();
+
+const b64decode = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const b64encode = (bytes) => btoa(String.fromCharCode(...bytes));
+
+// ---------- KeyboardEvent.code -> USB HID usage ----------
+const HID = (() => {
+  const map = {};
+  for (let i = 0; i < 26; i++) map["Key" + String.fromCharCode(65 + i)] = 0x04 + i;
+  for (let i = 1; i <= 9; i++) map["Digit" + i] = 0x1d + i;
+  map.Digit0 = 0x27;
+  for (let i = 1; i <= 12; i++) map["F" + i] = 0x39 + i;
+  for (let i = 13; i <= 20; i++) map["F" + i] = 0x5b + i;
+  for (let i = 1; i <= 9; i++) map["Numpad" + i] = 0x58 + i;
+  Object.assign(map, {
+    Enter: 0x28, Escape: 0x29, Backspace: 0x2a, Tab: 0x2b, Space: 0x2c, Minus: 0x2d, Equal: 0x2e,
+    BracketLeft: 0x2f, BracketRight: 0x30, Backslash: 0x31, Semicolon: 0x33, Quote: 0x34, Backquote: 0x35,
+    Comma: 0x36, Period: 0x37, Slash: 0x38, CapsLock: 0x39, PrintScreen: 0x46, ScrollLock: 0x47, Pause: 0x48,
+    Insert: 0x49, Home: 0x4a, PageUp: 0x4b, Delete: 0x4c, End: 0x4d, PageDown: 0x4e,
+    ArrowRight: 0x4f, ArrowLeft: 0x50, ArrowDown: 0x51, ArrowUp: 0x52,
+    NumLock: 0x53, NumpadDivide: 0x54, NumpadMultiply: 0x55, NumpadSubtract: 0x56, NumpadAdd: 0x57,
+    NumpadEnter: 0x58, Numpad0: 0x62, NumpadDecimal: 0x63, IntlBackslash: 0x64, NumpadEqual: 0x67,
+    IntlRo: 0x87, IntlYen: 0x89, Lang1: 0x90, Lang2: 0x91,
+    ControlLeft: 0xe0, ShiftLeft: 0xe1, AltLeft: 0xe2, MetaLeft: 0xe3,
+    ControlRight: 0xe4, ShiftRight: 0xe5, AltRight: 0xe6, MetaRight: 0xe7,
+    AudioVolumeMute: 0x7f, AudioVolumeUp: 0x80, AudioVolumeDown: 0x81,
+  });
+  return (code) => (map[code] !== undefined ? 0x70000 | map[code] : null);
+})();
+
+// ---------- DOM ----------
+const $ = (id) => document.getElementById(id);
+const ui = {
+  connect: $("connect"), form: $("form"), host: $("host"), password: $("password"), go: $("go"), status: $("status"),
+  viewer: $("viewer"), video: $("screen"), surface: $("surface"), toolbar: $("toolbar"), stats: $("stats"),
+  kbd: $("kbd"), compose: $("compose"), banner: $("banner"), kbar: $("kbar"), kbarPreview: $("kbarPreview"),
+  composeInput: $("composeInput"), composeSend: $("composeSend"), composeEnter: $("composeEnter"), composeUndo: $("composeUndo"),
+  btnKbd: $("btnKbd"), btnMouse: $("btnMouse"), btnSpeed: $("btnSpeed"), btnFill: $("btnFill"),
+  stage: $("stage"), tpHandle: $("tpHandle"), safeProbe: $("safeProbe"), btnSound: $("btnSound"), btnSettings: $("btnSettings"),
+  btnDisplay: $("btnDisplay"), toast: $("toast"), optClip: $("optClip"), optCtrlCmd: $("optCtrlCmd"),
+  sheet: $("sheet"), sheetForm: $("sheetForm"), sheetClose: $("sheetClose"), optStats: $("optStats"),
+  pwCurrent: $("pwCurrent"), pwNew: $("pwNew"), pwConfirm: $("pwConfirm"), pwStatus: $("pwStatus"), pwSave: $("pwSave"),
+  cursor: $("cursor"), cursorImg: $("cursorImg"), tp: $("tp"), tpNub: $("tpNub"), btnFull: $("btnFull"), btnClose: $("btnClose"),
+};
+
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+};
+
+// Served by the Mac itself (LAN / Tailscale) the viewer talks to it directly; served by the
+// Cloudflare relay (relay/) it goes through the relay using the Mac ID instead of an address.
+let relayMode = false;
+const hashId = new URLSearchParams(location.hash.slice(1)).get("id");
+if (hashId) store.set("jump.relayId", hashId.toLowerCase());
+ui.host.value = store.get("jump.host") || location.hostname || "";
+fetch("relay.json", { cache: "no-store" })
+  .then((response) => (response.ok ? response.json() : null))
+  .then((info) => {
+    if (!info || !info.relay) return;
+    relayMode = true;
+    $("hostLabel").textContent = "Mac ID";
+    ui.host.inputMode = "text";
+    ui.host.value = store.get("jump.relayId") || "";
+  })
+  .catch(() => {});
+ui.password.value = store.get("jump.password") || "";
+
+function setStatus(text, isError = false) {
+  ui.status.textContent = text;
+  ui.status.classList.toggle("error", isError);
+}
+
+// ---------- Show/hide password ----------
+const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 5.2A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M2 2l20 20"/></svg>';
+function showPassword(button, on) {
+  button.previousElementSibling.type = on ? "text" : "password";
+  button.setAttribute("aria-pressed", String(on));
+  button.setAttribute("aria-label", on ? "비밀번호 숨기기" : "비밀번호 보기");
+  button.innerHTML = on ? EYE_OFF : EYE;
+}
+for (const button of document.querySelectorAll(".pw .eye")) {
+  showPassword(button, false);
+  // Keep the field focused (and the iOS keyboard up) while toggling.
+  button.addEventListener("pointerdown", (e) => e.preventDefault());
+  button.addEventListener("click", () => showPassword(button, button.getAttribute("aria-pressed") !== "true"));
+}
+
+function showBanner(text) {
+  ui.banner.textContent = text;
+  ui.banner.classList.toggle("show", !!text);
+}
+
+// ---------- Audio ----------
+// System audio arrives on the "audio" data channel as 48 kHz stereo Int16 PCM (~21 ms per
+// message). Each message becomes an AudioBuffer scheduled back to back on the context clock,
+// ~60 ms ahead of now; packets are dropped while more than 250 ms is queued, so latency
+// never creeps up. (Plain buffer sources, not AudioWorklet: the worklet only exists in secure
+// contexts, and the viewer is served over plain http.)
+const AUDIO_RATE = 48000;
+const AUDIO_LEAD_S = 0.06;
+const AUDIO_MAX_QUEUE_S = 0.25;
+
+/** Sets a toolbar tile's icon and label. */
+function setTile(button, icon, label) {
+  button.querySelector("i").textContent = icon;
+  const span = button.querySelector("span");
+  span.textContent = label;
+  fitLabel(span);
+}
+
+/** Shrinks a tile label that is wider than its tile ("Mac Studio 재생"), down to 7.5px. */
+function fitLabel(span) {
+  span.style.fontSize = "";
+  const room = span.clientWidth;
+  if (room <= 0 || span.scrollWidth <= room) return;
+  const size = parseFloat(getComputedStyle(span).fontSize);
+  span.style.fontSize = `${Math.max(7.5, size * room / span.scrollWidth)}px`;
+}
+
+function clientLabel() {
+  const ua = navigator.userAgent;
+  if (/iPad|Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return "아이패드";
+  if (/iPhone/.test(ua)) return "아이폰";
+  if (/Android/.test(ua)) return "폰";
+  return navigator.maxTouchPoints > 0 ? "이 기기" : "이 컴퓨터";
+}
+
+let hostName = "";
+function macLabel() {
+  const names = [[/MacBook Air/i, "맥북에어"], [/MacBook Pro/i, "맥북프로"], [/Mac Studio/i, "맥스튜디오"],
+                 [/Mac mini/i, "맥미니"], [/iMac/i, "아이맥"], [/Mac Pro/i, "맥프로"]];
+  const match = names.find(([pattern]) => pattern.test(hostName));
+  return match ? match[1] : "맥";
+}
+
+const audio = {
+  context: null,
+  gain: null,
+  nextTime: 0,
+  muted: store.get("jump.muted") === "1",
+
+  /** Call from a user gesture: iOS only starts audio from one. */
+  unlock() {
+    if (this.context) {
+      this.resume();
+      return;
+    }
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (!Context) return;
+    try {
+      this.context = new Context({ sampleRate: AUDIO_RATE, latencyHint: "interactive" });
+    } catch {
+      this.context = new Context();
+    }
+    this.gain = this.context.createGain();
+    this.gain.gain.value = this.muted ? 0 : 1;
+    this.gain.connect(this.context.destination);
+    // A silent tick inside the gesture fully unlocks playback on iOS.
+    const tick = this.context.createBufferSource();
+    tick.buffer = this.context.createBuffer(1, 1, AUDIO_RATE);
+    tick.connect(this.context.destination);
+    tick.start();
+    this.resume();
+    this.report();
+  },
+
+  resume() {
+    if (this.context && this.context.state !== "running") this.context.resume().catch(() => {});
+  },
+
+  push(buffer) {
+    const ctx = this.context;
+    if (!ctx || this.muted) return;
+    const pcm = new Int16Array(buffer);
+    const frames = pcm.length >> 1;
+    if (!frames) return;
+    const now = ctx.currentTime;
+    if (this.nextTime < now + 0.01) this.nextTime = now + AUDIO_LEAD_S; // underrun: rebuffer
+    if (this.nextTime - now > AUDIO_MAX_QUEUE_S) return;                // backlog: drop to catch up
+    const chunk = ctx.createBuffer(2, frames, AUDIO_RATE);
+    const left = chunk.getChannelData(0);
+    const right = chunk.getChannelData(1);
+    for (let i = 0; i < frames; i++) {
+      left[i] = pcm[2 * i] / 32768;
+      right[i] = pcm[2 * i + 1] / 32768;
+    }
+    const source = ctx.createBufferSource();
+    source.buffer = chunk;
+    source.connect(this.gain);
+    source.start(this.nextTime);
+    this.nextTime += frames / AUDIO_RATE;
+  },
+
+  /** True when this device is actually able to play the stream. */
+  get playing() {
+    return !!this.context && !this.muted;
+  },
+
+  /** The host mutes the Mac only while we're the ones playing. */
+  report() {
+    if (session) session.sendInput({ t: "audio", on: this.playing });
+  },
+
+  setMuted(on) {
+    this.muted = on;
+    store.set("jump.muted", on ? "1" : "0");
+    if (this.gain) this.gain.gain.value = on ? 0 : 1;
+    this.label();
+    this.report();
+  },
+
+  /** The button names where sound comes out: this device or the Mac. */
+  label() {
+    setTile(ui.btnSound, this.muted ? "💻" : "🔊", `${this.muted ? macLabel() : clientLabel()}\n재생`);
+    ui.btnSound.classList.toggle("on", !this.muted);
+  },
+};
+// iOS suspends audio when the app is backgrounded; any touch brings it back.
+window.addEventListener("pointerdown", () => audio.resume(), { capture: true });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) audio.resume(); });
+
+// ---------- iOS touch guard ----------
+// The screen surface and the TrackPoint run on pointer events; keep iOS from also treating
+// those touches as scrolls, long-press callouts or system gestures.
+for (const el of [ui.surface, ui.tp]) {
+  el.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+  el.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+}
+
+// ---------- Page zoom guard ----------
+// iOS Safari ignores user-scalable=no, so block its pinch/double-tap zoom directly and
+// snap back if the page ends up zoomed anyway.
+for (const type of ["gesturestart", "gesturechange", "gestureend", "dblclick"]) {
+  document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+}
+const viewportMeta = document.querySelector('meta[name="viewport"]');
+const viewportContent = viewportMeta.content;
+let zoomResetTimer = null;
+function resetPageZoom() {
+  // Rewriting the viewport tag makes iOS re-apply initial-scale=1.
+  viewportMeta.content = viewportContent.replace("initial-scale=1", "initial-scale=1.0");
+  requestAnimationFrame(() => { viewportMeta.content = viewportContent; });
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", () => {
+    clearTimeout(zoomResetTimer);
+    if (visualViewport.scale > 1.01) zoomResetTimer = setTimeout(resetPageZoom, 300);
+  });
+}
+
+
+// ---------- Session ----------
+let session = null;
+
+class Session {
+  constructor(host, password) {
+    this.host = host;
+    this.password = password;
+    this.pc = null;
+    this.ws = null;
+    this.input = null;
+    this.display = null; // { w, h } in Mac points
+    this.closed = false;
+    this.lastRtt = null;
+    this.timers = [];
+    this.connected = false; // reached the Mac at least once: losing it now means reconnect
+    this.resuming = false;  // this session is itself a reconnect attempt
+    this.attempt = 0;
+    this.final = false;     // the Mac said stop (wrong password, another device took over, …)
+    this.displays = null;
+  }
+
+  start() {
+    const url = relayMode
+      ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/client?id=${encodeURIComponent(this.host.toLowerCase())}`
+      : `ws://${this.host.includes(":") ? this.host : this.host + ":47865"}/`;
+    this.ws = new WebSocket(url);
+    this.ws.onmessage = (event) => this.onSignal(JSON.parse(event.data));
+    // Signaling only sets the session up: once the picture flows, losing it (a backgrounded
+    // page, a mobile network, the relay) is fine. The data channel and WebRTC decide from then on.
+    const signalingLost = (reason) => {
+      if (this.connected && !this.lastError && this.pc && this.pc.connectionState === "connected") {
+        this.ws = null;
+        return;
+      }
+      this.fail(reason);
+    };
+    this.ws.onerror = () => signalingLost(relayMode
+      ? "중개 서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요."
+      : "Mac에 연결할 수 없습니다. 주소와 호스트 실행 여부를 확인하세요.");
+    this.ws.onclose = (event) => signalingLost(this.lastError || (event.code === 4404
+      ? "Mac이 꺼져 있거나 인터넷에 연결돼 있지 않습니다. Mac ID도 확인하세요."
+      : "연결이 종료되었습니다."));
+  }
+
+  send(message) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
+  }
+
+  async onSignal(message) {
+    switch (message.type) {
+      case "challenge": {
+        const mac = SHA.hmac(new TextEncoder().encode(this.password), b64decode(message.nonce));
+        const dpr = window.devicePixelRatio || 1;
+        this.send({
+          type: "auth",
+          hmac: b64encode(mac),
+          device: {
+            name: deviceName(),
+            width: Math.round(screen.width * dpr),
+            height: Math.round(screen.height * dpr),
+            scale: dpr,
+            cursor: true, // we draw the cursor ourselves
+            codecs: receivableCodecs(), // lets the host pick HEVC when we can decode it
+            ...(this.resumeReason ? { reconnect: this.resumeReason } : {}), // for the host's log
+          },
+        });
+        hostName = message.host || "";
+        audio.label();
+        setStatus(`${message.host}에 인증 중…`);
+        break;
+      }
+      case "offer":
+        await this.answer(message.sdp, message.iceServers || []);
+        break;
+      case "candidate":
+        if (this.pc && message.candidate) {
+          try { await this.pc.addIceCandidate({ candidate: message.candidate, sdpMid: message.sdpMid, sdpMLineIndex: message.sdpMLineIndex }); }
+          catch (err) { console.warn("addIceCandidate", err); }
+        }
+        break;
+      case "error":
+        // The close frame can lag behind (especially through the relay); end now.
+        this.lastError = message.message;
+        if (!message.retry) this.final = true;
+        this.fail(message.message, !!message.retry);
+        break;
+    }
+  }
+
+  /** `iceServers` come from the Mac (STUN, plus TURN through the relay) only after auth. */
+  async answer(sdp, iceServers) {
+    const pc = new RTCPeerConnection({ iceServers, bundlePolicy: "max-bundle" });
+    this.pc = pc;
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.send({ type: "candidate", candidate: event.candidate.candidate,
+                    sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex });
+      }
+    };
+    pc.ontrack = (event) => {
+      // Ask for the smallest jitter buffer the browser allows: latency over smoothness.
+      // Smallest jitter buffer target, but let the browser's own jitter estimate smooth playback
+      // on a jittery network: forcing zero playout delay drew frames the moment they arrived,
+      // which on Wi-Fi/LTE turned small delay swings into visible stutter.
+      try { event.receiver.jitterBufferTarget = 0; } catch {}
+      ui.video.srcObject = event.streams[0] || new MediaStream([event.track]);
+      ui.video.play().catch(() => {});
+    };
+    pc.ondatachannel = (event) => {
+      const channel = event.channel;
+      if (channel.label === "audio") {
+        channel.binaryType = "arraybuffer";
+        channel.onmessage = (e) => audio.push(e.data);
+        this.audio = channel;
+        return;
+      }
+      this.input = channel;
+      this.input.onmessage = (e) => this.onInputMessage(JSON.parse(e.data));
+      // The Mac closed it (or the link died): the session is over.
+      this.input.onclose = () => { if (this === session && !this.closed) this.fail("연결이 끊어졌습니다."); };
+      if (channel.readyState === "open") audio.report();
+      else channel.addEventListener("open", () => audio.report());
+    };
+    pc.onconnectionstatechange = () => {
+      clearTimeout(this.lossTimer);
+      if (pc.connectionState === "connected") {
+        this.connected = true;
+        this.resuming = false;
+        this.attempt = 0;
+        showBanner("");
+        enterViewer();
+      }
+      if (pc.connectionState === "failed") this.fail("연결이 끊어졌습니다.");
+      // A network switch leaves the link "disconnected" for a long while before it "fails"; start
+      // over sooner, but not on a hiccup it recovers from by itself (a few seconds of loss).
+      // With signaling gone as well, both say the link is dead: go sooner.
+      if (pc.connectionState === "disconnected") {
+        const wait = this.ws ? 8 : 2.5;
+        this.lossTimer = setTimeout(() => this.fail(`연결이 끊어졌습니다 (${wait}초 동안 응답 없음).`), wait * 1000);
+      }
+    };
+
+    await pc.setRemoteDescription({ type: "offer", sdp });
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    this.send({ type: "answer", sdp: pc.localDescription.sdp });
+    setStatus("화면 연결 중…");
+
+    this.timers.push(setInterval(() => this.sendInput({ t: "ping", ts: performance.now() }), 1000));
+    this.timers.push(setInterval(() => this.updateStats(), 1000));
+  }
+
+  onInputMessage(message) {
+    if (message.t === "display") this.display = { w: message.w, h: message.h, id: message.id };
+    if (message.t === "displays") { this.displays = message; updateDisplayTile(); }
+    if (message.t === "clip") clipboard.receive(message.text);
+    if (message.t === "bye") {
+      // The Mac ended the session (another device took over, a setting changed, …).
+      this.lastError = message.message;
+      if (!message.retry) this.final = true;
+      this.fail(message.message, !!message.retry);
+    }
+    if (message.t === "cursor") hostCursorMoved({ x: message.x, y: message.y });
+    if (message.t === "cursorImage") setCursorImage(message);
+    if (message.t === "pong") this.lastRtt = performance.now() - message.ts;
+    if (message.t === "password" && this.passwordReply) this.passwordReply(message);
+  }
+
+  /** Asks the host to change its password; resolves to {ok, error?}. */
+  changePassword(current, next) {
+    return new Promise((resolve) => {
+      if (!this.input || this.input.readyState !== "open") return resolve({ ok: false, error: "아직 연결 중입니다" });
+      const timer = setTimeout(() => finish({ ok: false, error: "Mac이 응답하지 않습니다" }), 10000);
+      const finish = (result) => {
+        clearTimeout(timer);
+        this.passwordReply = null;
+        resolve(result);
+      };
+      this.passwordReply = finish;
+      this.sendInput({ t: "password", current, new: next });
+    });
+  }
+
+  sendInput(message) {
+    if (this.input && this.input.readyState === "open") this.input.send(JSON.stringify(message));
+  }
+
+  async updateStats() {
+    if (!this.pc || !ui.stats.classList.contains("show")) return;
+    const report = await this.pc.getStats();
+    let video = null, codec = null, pair = null;
+    report.forEach((s) => {
+      if (s.type === "inbound-rtp" && s.kind === "video") video = s;
+      if (s.type === "candidate-pair" && s.nominated && s.state === "succeeded") pair = s;
+    });
+    if (video && video.codecId) codec = report.get(video.codecId);
+    if (!video) return;
+    const now = performance.now();
+    const bytes = video.bytesReceived || 0;
+    const mbps = this.prevBytes != null ? ((bytes - this.prevBytes) * 8) / ((now - this.prevTime) * 1000) : 0;
+    this.prevBytes = bytes; this.prevTime = now;
+    const jitterMs = video.jitterBufferEmittedCount
+      ? (1000 * video.jitterBufferDelay) / video.jitterBufferEmittedCount : 0;
+    const decodeMs = video.framesDecoded ? (1000 * video.totalDecodeTime) / video.framesDecoded : 0;
+    ui.stats.textContent = [
+      `${video.frameWidth || "?"}×${video.frameHeight || "?"}  ${Math.round(video.framesPerSecond || 0)} fps`,
+      `${mbps.toFixed(1)} Mbps  ${codec ? codec.mimeType.replace("video/", "") : ""}`,
+      `RTT ${this.lastRtt != null ? this.lastRtt.toFixed(0) : "?"} ms  ${pathLabel(report, pair)}`,
+      `jitter buf ${jitterMs.toFixed(0)} ms  decode ${decodeMs.toFixed(1)} ms`,
+      `dropped ${video.framesDropped || 0}  ${video.decoderImplementation || ""}`,
+    ].join("\n");
+  }
+
+  fail(reason, retry = false) {
+    if (this.closed) return;
+    const resume = this === session && !this.final && (retry || this.connected || this.resuming);
+    this.close(resume);
+    if (resume) return scheduleReconnect(this, reason);
+    leaveViewer();
+    setStatus(reason, true);
+  }
+
+  /** `keepPicture`: leave the last frame up while reconnecting. */
+  close(keepPicture = false) {
+    this.closed = true;
+    clearTimeout(this.lossTimer);
+    if (this.input) this.input.onclose = null;
+    this.timers.forEach(clearInterval);
+    try { this.input && this.input.close(); } catch {}
+    try { this.audio && this.audio.close(); } catch {}
+    try { this.pc && this.pc.close(); } catch {}
+    try { this.ws && this.ws.close(); } catch {}
+    if (!keepPicture) ui.video.srcObject = null;
+  }
+}
+
+/** "직접 연결" or "TURN 우회" for the candidate pair carrying the media. */
+function pathLabel(report, pair) {
+  if (!pair) return "";
+  const type = (id) => { const c = report.get(id); return c ? c.candidateType : "?"; };
+  return type(pair.localCandidateId) === "relay" || type(pair.remoteCandidateId) === "relay" ? "TURN 우회" : "직접 연결";
+}
+
+function receivableCodecs() {
+  try {
+    return [...new Set(RTCRtpReceiver.getCapabilities("video").codecs.map((c) => c.mimeType))];
+  } catch {
+    return [];
+  }
+}
+
+function deviceName() {
+  const ua = navigator.userAgent;
+  if (/iPad|Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return "iPad (Web)";
+  if (/iPhone/.test(ua)) return "iPhone (Web)";
+  if (/Android/.test(ua)) return "Android (Web)";
+  if (/Macintosh/.test(ua)) return "Mac (Web)";
+  if (/Windows/.test(ua)) return "PC (Web)";
+  return "Browser";
+}
+
+// ---------- Auto-reconnect ----------
+// A dropped link (network switch, the phone locking, the Mac restarting Jump) reconnects by
+// itself with the same address and password, keeping the viewer and the last frame up.
+const RECONNECT_DELAYS = [0, 1, 2, 3, 5, 5, 10, 10, 15, 20]; // seconds, about 70 s in all
+let reconnectTimer = null;
+let reconnectNow = null;
+function scheduleReconnect(old, reason) {
+  const attempt = old.attempt;
+  if (attempt >= RECONNECT_DELAYS.length) {
+    session = null;
+    showBanner("");
+    leaveViewer();
+    setStatus(`다시 연결하지 못했습니다. ${reason}`, true);
+    return;
+  }
+  showBanner(`연결이 끊겨 다시 연결하는 중… (${attempt + 1}/${RECONNECT_DELAYS.length})`);
+  reconnectNow = () => {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    if (session !== old) return; // closed by the user, or replaced by a new connection
+    if (document.hidden) return; // a backgrounded page tries again when it comes back
+    reconnectNow = null;
+    const next = new Session(old.host, old.password);
+    next.attempt = attempt + 1;
+    next.resuming = true;
+    next.resumeReason = reason;
+    session = next;
+    next.start();
+  };
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(reconnectNow, RECONNECT_DELAYS[attempt] * 1000);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && reconnectNow) reconnectNow(); });
+function cancelReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  reconnectNow = null;
+  showBanner("");
+}
+
+ui.form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  audio.unlock(); // inside the tap that submitted the form
+  const host = ui.host.value.trim();
+  const password = ui.password.value;
+  store.set(relayMode ? "jump.relayId" : "jump.host", relayMode ? host.toLowerCase() : host);
+  store.set("jump.password", password);
+  if (session) session.close();
+  cancelReconnect();
+  setStatus("연결 중…");
+  session = new Session(host, password);
+  session.start();
+});
+
+// Keep the iPad from auto-locking while the remote screen is up (Safari 16.4+).
+let wakeLock = null;
+async function holdWakeLock() {
+  if (!("wakeLock" in navigator) || wakeLock || !ui.viewer.classList.contains("active")) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch {}
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) holdWakeLock(); });
+
+// ---------- Auto-update ----------
+// Home-screen apps resume instead of reloading, so an open copy can run old code for days.
+// On launch, whenever the page comes back and every few minutes, compare with the served page:
+// idle, reload; in a session, offer a button that reloads and connects again by itself.
+function pageCode(doc) {
+  return [...doc.querySelectorAll("style, script:not([src])")].map((el) => el.textContent).join("\n");
+}
+const ownCode = pageCode(document);
+const updateBtn = document.getElementById("updateBtn");
+updateBtn.addEventListener("click", () => {
+  try { sessionStorage.setItem("jump.resumeAfterUpdate", "1"); } catch {}
+  if (session) session.close();
+  location.reload();
+});
+async function checkForUpdate() {
+  try {
+    const response = await fetch(location.pathname, { cache: "no-store" });
+    if (!response.ok) return;
+    const latest = pageCode(new DOMParser().parseFromString(await response.text(), "text/html"));
+    if (latest === ownCode) return;
+    if (session && !session.closed) {
+      updateBtn.classList.add("show"); // don't pull the screen away mid-work
+      return;
+    }
+    // Never loop if the server keeps answering with something else.
+    const last = Number(sessionStorage.getItem("jump.updatedAt") || 0);
+    if (Date.now() - last < 60000) return;
+    sessionStorage.setItem("jump.updatedAt", String(Date.now()));
+    location.reload();
+  } catch {}
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkForUpdate(); });
+window.addEventListener("pageshow", (e) => { if (e.persisted) checkForUpdate(); });
+setTimeout(checkForUpdate, 500);
+setInterval(checkForUpdate, 3 * 60 * 1000);
+// Reloaded by "적용" during a session: connect again right away with the saved details.
+try {
+  if (sessionStorage.getItem("jump.resumeAfterUpdate") === "1") {
+    sessionStorage.removeItem("jump.resumeAfterUpdate");
+    if (ui.host.value && ui.password.value) setTimeout(() => ui.form.requestSubmit(), 300);
+  }
+} catch {}
+
+function enterViewer() {
+  showBanner("");
+  holdWakeLock();
+  ui.connect.style.display = "none";
+  ui.viewer.classList.add("active");
+  setStatus("");
+  setPadPlacement(tpPlacement);
+  requestAnimationFrame(() => { refitView(); layoutViewer(); });
+}
+
+function leaveViewer() {
+  cursorShape = null;
+  ui.cursor.classList.remove("image");
+  if (wakeLock) wakeLock.release().catch(() => {});
+  releaseTrackPoint();
+  ui.viewer.classList.remove("active");
+  ui.connect.style.display = "";
+  setKeyboard(false);
+  openSettings(false);
+}
+
+// ---------- Pointer input ----------
+/** The whole Mac screen fitted (letterboxed) into the viewer, before any zoom. */
+function videoRect() {
+  const r = ui.surface.getBoundingClientRect();
+  const vw = ui.video.videoWidth || 16, vh = ui.video.videoHeight || 9;
+  const scale = Math.min(r.width / vw, r.height / vh);
+  const w = vw * scale, h = vh * scale;
+  return { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, width: w, height: h };
+}
+
+// ---------- Zoom ----------
+// screen = (x, y) + scale * content. "채움" covers the screen (cropping one axis); pinch zooms
+// freely. Either way the view never pans into the black bars and follows the cursor.
+const view = { scale: 1, x: 0, y: 0, fill: store.get("jump.fill") === "1" };
+const MAX_ZOOM = 6;
+
+function applyView() {
+  ui.stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  layoutViewer();
+}
+
+function clampView() {
+  const r = videoRect();
+  const axis = (v, start, length, extent) => {
+    const size = length * view.scale;
+    if (size <= extent) return (extent - size) / 2 - start * view.scale;
+    return Math.min(Math.max(v, extent - (start + length) * view.scale), -start * view.scale);
+  };
+  view.x = axis(view.x, r.left, r.width, innerWidth);
+  view.y = axis(view.y, r.top, r.height, innerHeight);
+}
+
+function fillScale() {
+  const r = videoRect();
+  return Math.max(1, innerWidth / r.width, innerHeight / r.height);
+}
+
+function setFill(on) {
+  view.fill = on;
+  store.set("jump.fill", on ? "1" : "0");
+  setTile(ui.btnFill, on ? "⤡" : "⤢", on ? "채움" : "맞춤");
+  ui.btnFill.classList.toggle("on", on);
+  if (on) {
+    const r = videoRect();
+    view.scale = fillScale();
+    view.x = innerWidth / 2 - (r.left + cursor.x * r.width) * view.scale;
+    view.y = innerHeight / 2 - (r.top + cursor.y * r.height) * view.scale;
+  } else {
+    view.scale = 1;
+  }
+  clampView();
+  applyView();
+}
+
+/** After a resize or rotation. */
+function refitView() {
+  if (view.fill) view.scale = fillScale();
+  clampView();
+  applyView();
+}
+
+/** Zoomed in, pan so the cursor stays at least a margin inside the screen. */
+function followCursor() {
+  if (view.scale <= 1.001) return;
+  const r = videoRect();
+  const sx = view.x + (r.left + cursor.x * r.width) * view.scale;
+  const sy = view.y + (r.top + cursor.y * r.height) * view.scale;
+  const margin = 56;
+  const before = [view.x, view.y];
+  if (sx < margin) view.x += margin - sx;
+  if (sx > innerWidth - margin) view.x -= sx - (innerWidth - margin);
+  if (sy < margin) view.y += margin - sy;
+  if (sy > innerHeight - margin) view.y -= sy - (innerHeight - margin);
+  clampView();
+  if (view.x !== before[0] || view.y !== before[1]) applyView();
+}
+
+function normalize(clientX, clientY) {
+  const r = videoRect();
+  const x = (clientX - view.x) / view.scale, y = (clientY - view.y) / view.scale;
+  // A pointer at the last pixel of the picture maps a little short of the Mac's last pixel (the
+  // screens differ in size), so the Dock and hot corners never trigger. Snap the outer 2 pixels
+  // to the very edge.
+  const edge = (value, start, size) => {
+    const along = value - start;
+    if (along <= 2) return 0;
+    if (along >= size - 2) return 1;
+    return along / size;
+  };
+  return { x: edge(x, r.left, r.width), y: edge(y, r.top, r.height) };
+}
+
+/** CSS pixels on screen -> Mac points. */
+function pointsPerCssPixel() {
+  const r = videoRect();
+  return session && session.display ? session.display.w / (r.width * view.scale) : 1;
+}
+
+const send = (message) => {
+  if (message.t === "down") forgetSent(); // a click on the Mac may move its cursor away from what was sent
+  return session && session.sendInput(message);
+};
+// Capture can throw if the pointer is already gone; input must keep working regardless.
+const capture = (element, e) => { try { element.setPointerCapture(e.pointerId); } catch {} };
+const BUTTONS = { 0: 0, 1: 2, 2: 1 }; // DOM button -> protocol button
+
+// Mouse / trackpad / pen: direct mapping.
+ui.surface.addEventListener("contextmenu", (e) => e.preventDefault());
+ui.surface.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "touch") return;
+  ui.surface.classList.toggle("mac-cursor", !!cursorShape);
+  sendMove(normalize(e.clientX, e.clientY));
+});
+ui.surface.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "touch") return touchDown(e);
+  capture(ui.surface, e);
+  send({ t: "down", b: BUTTONS[e.button] ?? 0, ...normalize(e.clientX, e.clientY) });
+  e.preventDefault();
+});
+ui.surface.addEventListener("pointerup", (e) => {
+  if (e.pointerType === "touch") return touchUp(e);
+  send({ t: "up", b: BUTTONS[e.button] ?? 0, ...normalize(e.clientX, e.clientY) });
+});
+ui.surface.addEventListener("pointercancel", (e) => { if (e.pointerType === "touch") touchUp(e, true); });
+ui.surface.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
+  send({ t: "scroll", dx: -e.deltaX * unit, dy: -e.deltaY * unit });
+}, { passive: false });
+
+// Touch on the screen: tap = click where touched, drag = drag, long press = right click,
+// two-finger tap = right click, two-finger drag = scroll.
+const touches = new Map();
+let gesture = null; // { kind: "pending" | "drag" | "two" | "done", ... }
+const LONG_PRESS_MS = 500;
+const DRAG_SLOP = 8;
+const TAP_MS = 250;
+
+let cursor = { x: 0.5, y: 0.5 }; // last pointer position sent, normalized
+const clamp01 = (v) => Math.min(Math.max(v, 0), 1);
+
+let cursorShape = null;  // { w, h, hx, hy } in Mac points once the host sends the real cursor
+let lastLocalMove = 0;
+
+function sendMove(p) {
+  cursor = p;
+  lastLocalMove = performance.now();
+  send({ t: "move", ...p });
+  drawCursor();
+  followCursor();
+}
+
+/** Host-reported position; ignored while we're steering, since our own position is newer. */
+function hostCursorMoved(p) {
+  if (performance.now() - lastLocalMove < 300) return;
+  cursor = p;
+  drawCursor();
+  followCursor();
+}
+
+function setCursorImage(message) {
+  ui.cursorImg.src = `data:image/png;base64,${message.png}`;
+  cursorShape = { w: message.w, h: message.h, hx: message.hx, hy: message.hy };
+  ui.cursor.classList.add("image", "show");
+  drawCursor();
+}
+
+function click(button, p) {
+  sendMove(p);
+  send({ t: "down", b: button, ...p });
+  send({ t: "up", b: button, ...p });
+}
+
+/** Local ring at the cursor: moves instantly while the streamed cursor catches up. */
+function drawCursor() {
+  const r = videoRect();
+  let left = r.left + cursor.x * r.width;
+  let top = r.top + cursor.y * r.height;
+  if (cursorShape) {
+    const scale = r.width / macDisplay().w;
+    ui.cursorImg.style.width = `${cursorShape.w * scale}px`;
+    ui.cursorImg.style.height = `${cursorShape.h * scale}px`;
+    left -= cursorShape.hx * scale;
+    top -= cursorShape.hy * scale;
+  }
+  ui.cursor.style.left = `${left}px`;
+  ui.cursor.style.top = `${top}px`;
+}
+
+function touchDown(e) {
+  capture(ui.surface, e);
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (touches.size === 1) {
+    const start = { x: e.clientX, y: e.clientY };
+    gesture = { kind: "pending", start, timer: setTimeout(() => longPress(start), LONG_PRESS_MS) };
+  } else if (touches.size === 2) {
+    if (gesture && gesture.kind === "drag") send({ t: "up", b: 0, ...cursor });
+    if (gesture) clearTimeout(gesture.timer);
+    gesture = {
+      kind: "two", center: touchCenter(), time: performance.now(), moved: false, mode: null,
+      startCenter: touchCenter(), startDistance: Math.max(touchDistance(), 1), startView: { ...view },
+    };
+  }
+}
+
+function touchDistance() {
+  const [a, b] = [...touches.values()];
+  return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 1;
+}
+
+ui.surface.addEventListener("pointermove", (e) => {
+  if (e.pointerType !== "touch" || !touches.has(e.pointerId)) return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!gesture) return;
+  if (gesture.kind === "pending") {
+    if (Math.hypot(e.clientX - gesture.start.x, e.clientY - gesture.start.y) <= DRAG_SLOP) return;
+    clearTimeout(gesture.timer);
+    const p = normalize(gesture.start.x, gesture.start.y);
+    sendMove(p);
+    send({ t: "down", b: 0, ...p });
+    gesture = { kind: "drag" };
+  }
+  if (gesture.kind === "drag") {
+    sendMove(normalize(e.clientX, e.clientY));
+  } else if (gesture.kind === "two" && touches.size >= 2) {
+    const center = touchCenter();
+    const ratio = touchDistance() / gesture.startDistance;
+    if (!gesture.mode) {
+      if (Math.abs(ratio - 1) > 0.12) gesture.mode = "zoom";
+      else if (Math.hypot(center.x - gesture.startCenter.x, center.y - gesture.startCenter.y) > DRAG_SLOP) gesture.mode = "scroll";
+      else return;
+      gesture.moved = true;
+    }
+    if (gesture.mode === "zoom") {
+      // Keep the point that was under the fingers under them.
+      const s0 = gesture.startView;
+      const scale = Math.min(Math.max(s0.scale * ratio, 1), MAX_ZOOM);
+      const ax = (gesture.startCenter.x - s0.x) / s0.scale, ay = (gesture.startCenter.y - s0.y) / s0.scale;
+      view.scale = scale;
+      view.x = center.x - ax * scale;
+      view.y = center.y - ay * scale;
+      if (scale <= 1.001 && view.fill) setFill(false);
+      clampView();
+      applyView();
+    } else {
+      const k = pointsPerCssPixel();
+      send({ t: "scroll", dx: (center.x - gesture.center.x) * k, dy: (center.y - gesture.center.y) * k });
+    }
+    gesture.center = center;
+  }
+});
+
+function touchUp(e, cancelled = false) {
+  touches.delete(e.pointerId);
+  if (!gesture) return;
+  if (gesture.kind === "pending" && !cancelled) {
+    clearTimeout(gesture.timer);
+    click(0, normalize(gesture.start.x, gesture.start.y));
+  } else if (gesture.kind === "drag") {
+    send({ t: "up", b: 0, ...cursor });
+  } else if (gesture.kind === "two" && !cancelled && !gesture.moved && performance.now() - gesture.time < TAP_MS) {
+    click(1, normalize(gesture.center.x, gesture.center.y));
+    gesture = { kind: "done" };
+  }
+  if (touches.size === 0) gesture = null;
+  else if (gesture.kind !== "two") gesture = { kind: "done" };
+}
+
+function longPress(start) {
+  if (!gesture || gesture.kind !== "pending") return;
+  click(1, normalize(start.x, start.y));
+  gesture = { kind: "done" };
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+
+function touchCenter() {
+  let x = 0, y = 0;
+  touches.forEach((t) => { x += t.x; y += t.y; });
+  return { x: x / touches.size, y: y / touches.size };
+}
+
+// ---------- Trackpad stick ----------
+// Moves like the MacBook's own trackpad: relative finger motion run through macOS's pointer
+// acceleration, so slow strokes are ~1:1 and precise while quick flicks travel far.
+// The curves are this Mac's (IOHIDFamily parametric "HIDAccelCurves", one per System Settings
+// tracking-speed step): finger speed in inches/s goes in, cursor speed in inches/s comes out.
+//   drag (the finger may leave the circle) = move, tap = click, two taps = double click,
+//   hold (blue ring) = right click, hold then drag (blue) = drag. Scroll: two fingers on screen.
+const MAC_ACCEL_CURVES = [
+  { index: 0.0, g1: 1.0, g2: 0.0, g3: 0.0, g4: 0.0, t1: 7.39999, t2: 21.0 },
+  { index: 0.125, g1: 0.99001, g2: 0.5, g3: 0.08, g4: 0.0, t1: 7.3, t2: 20.0 },
+  { index: 0.5, g1: 0.98, g2: 0.66, g3: 0.10001, g4: 0.0, t1: 7.2, t2: 19.0 },
+  { index: 0.6875, g1: 0.96001, g2: 0.83, g3: 0.12, g4: 0.0, t1: 7.10001, t2: 18.0 },
+  { index: 0.875, g1: 0.94, g2: 1.0, g3: 0.14999, g4: 0.0, t1: 7.0, t2: 17.0 },
+  { index: 1.0, g1: 0.92, g2: 1.14999, g3: 0.17999, g4: 0.0, t1: 7.0, t2: 16.0 },
+  { index: 1.5, g1: 0.89, g2: 1.3, g3: 0.21001, g4: 0.0, t1: 7.0, t2: 15.0 },
+  { index: 2.0, g1: 0.86, g2: 1.45, g3: 0.24001, g4: 0.0, t1: 7.0, t2: 14.0 },
+  { index: 2.5, g1: 0.83, g2: 1.66, g3: 0.28, g4: 0.0, t1: 7.0, t2: 13.0 },
+  { index: 3.0, g1: 1.0, g2: 1.88, g3: 0.36, g4: 0.0, t1: 7.0, t2: 12.0 },
+];
+const POINTS_PER_INCH = 72;
+// Glass under a fingertip isn't a MacBook trackpad: at 1:1 the macOS curve felt too fast, so
+// scale it down (slow 1 in/s stroke ≈ 90 pt instead of 162).
+const TP_SCALE = 0.55;
+const CSS_PX_PER_INCH = (() => {
+  const ua = navigator.userAgent;
+  if (/iPad|Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return 132;
+  if (/iPhone/.test(ua)) return 163;
+  if (/Android/.test(ua)) return 160;
+  return 96;
+})();
+const TP_VELOCITY_WINDOW_MS = 50;
+const TP_MOVE_PX = 3;         // travel that counts as "moved" (ends tap / hold detection)
+const TP_HOLD_MS = 450;
+const TP_NUB_TRAVEL = 24;     // how far the drawn nub follows the finger
+const TP_SPEEDS = {           // macOS tracking-speed steps
+  slow: { label: "느림", index: 0.6875 },
+  normal: { label: "보통", index: 1.0 },
+  fast: { label: "빠름", index: 1.5 },
+};
+let tpSpeed = TP_SPEEDS[store.get("jump.speed")] ? store.get("jump.speed") : "normal";
+const TP_PLACEMENTS = ["right", "left", "hidden"];
+// A computer with a mouse doesn't need the stick unless asked for.
+let tpPlacement = TP_PLACEMENTS.includes(store.get("jump.ball")) ? store.get("jump.ball")
+  : navigator.maxTouchPoints > 0 ? "right" : "hidden";
+let nub = null; // { id, start, last, samples, moved, held, dragging, timer }
+
+/** Polynomial up to the first tangent, then its tangent line, then a square-root tail. */
+function prepareCurve(c) {
+  const f = (x) => c.g1 * x + c.g2 * x ** 2 + c.g3 * x ** 3 + c.g4 * x ** 4;
+  const slope = (x) => c.g1 + 2 * c.g2 * x + 3 * c.g3 * x ** 2 + 4 * c.g4 * x ** 3;
+  const m0 = slope(c.t1);
+  const b0 = f(c.t1) - m0 * c.t1;
+  const y1 = m0 * c.t2 + b0;
+  const mRoot = 2 * y1 * m0; // sqrt(mRoot*x + bRoot) meets the line at t2 with the same slope
+  const bRoot = y1 * y1 - mRoot * c.t2;
+  return (v) => (v <= c.t1 ? f(v) : v <= c.t2 ? m0 * v + b0 : Math.sqrt(mRoot * v + bRoot));
+}
+const accelCurves = new Map(MAC_ACCEL_CURVES.map((c) => [c.index, { g1: c.g1, speed: prepareCurve(c) }]));
+
+/** Mac points of cursor travel per CSS pixel of finger travel at this finger speed. */
+function trackpadGain(inchesPerSecond) {
+  const curve = accelCurves.get(TP_SPEEDS[tpSpeed].index);
+  const gain = inchesPerSecond > 0.05 ? curve.speed(inchesPerSecond) / inchesPerSecond : curve.g1;
+  return (gain * POINTS_PER_INCH * TP_SCALE) / CSS_PX_PER_INCH;
+}
+
+function setPadPlacement(placement) {
+  tpPlacement = placement;
+  store.set("jump.ball", placement);
+  const visible = placement !== "hidden";
+  ui.tp.classList.toggle("show", visible);
+  ui.cursor.classList.toggle("show", visible || !!cursorShape);
+  ui.btnMouse.classList.toggle("on", visible);
+  if (!visible) releaseTrackPoint();
+  drawCursor();
+  layoutViewer();
+}
+
+function macDisplay() {
+  return (session && session.display) || { w: 1470, h: 956 };
+}
+
+function moveByPoints(dx, dy) {
+  const d = macDisplay();
+  sendMove({ x: clamp01(cursor.x + dx / d.w), y: clamp01(cursor.y + dy / d.h) });
+}
+
+function endNub(cancelled) {
+  if (!nub) return;
+  clearTimeout(nub.timer);
+  if (nub.dragging) send({ t: "up", b: 0, ...cursor });
+  else if (!cancelled && !nub.moved) click(nub.held ? 1 : 0, cursor);
+  nub = null;
+  ui.tp.classList.remove("held", "dragging");
+  ui.tpNub.style.transform = "";
+}
+
+function releaseTrackPoint() {
+  endNub(true);
+}
+
+ui.tp.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (nub) return;
+  capture(ui.tp, e);
+  const start = { x: e.clientX, y: e.clientY };
+  nub = {
+    id: e.pointerId, start, last: start, samples: [{ t: e.timeStamp, ...start }],
+    moved: false, held: false, dragging: false,
+    timer: setTimeout(() => {
+      if (!nub || nub.moved) return;
+      nub.held = true;
+      ui.tp.classList.add("held");
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, TP_HOLD_MS),
+  };
+});
+
+ui.tp.addEventListener("pointermove", (e) => {
+  if (!nub || e.pointerId !== nub.id) return;
+  const dx = e.clientX - nub.last.x;
+  const dy = e.clientY - nub.last.y;
+  nub.last = { x: e.clientX, y: e.clientY };
+  nub.samples.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
+  while (nub.samples.length > 2 && e.timeStamp - nub.samples[0].t > TP_VELOCITY_WINDOW_MS) nub.samples.shift();
+
+  const ox = e.clientX - nub.start.x;
+  const oy = e.clientY - nub.start.y;
+  const distance = Math.hypot(ox, oy);
+  if (!nub.moved) {
+    if (distance <= TP_MOVE_PX) return;
+    nub.moved = true;
+    clearTimeout(nub.timer);
+    if (nub.held) {
+      nub.dragging = true;
+      ui.tp.classList.remove("held");
+      ui.tp.classList.add("dragging");
+      send({ t: "down", b: 0, c: 1, ...cursor }); // c:1: not the tail of a double click
+    }
+  }
+
+  const first = nub.samples[0];
+  const seconds = (e.timeStamp - first.t) / 1000;
+  const inches = Math.hypot(e.clientX - first.x, e.clientY - first.y) / CSS_PX_PER_INCH;
+  const gain = trackpadGain(seconds > 0 ? inches / seconds : 0);
+  moveByPoints(dx * gain, dy * gain);
+
+  const lean = (Math.min(distance, 40) / 40) * TP_NUB_TRAVEL;
+  ui.tpNub.style.transform = `translate(${(ox / distance) * lean}px, ${(oy / distance) * lean}px)`;
+});
+
+ui.tp.addEventListener("pointerup", (e) => { if (nub && e.pointerId === nub.id) endNub(false); });
+ui.tp.addEventListener("pointercancel", (e) => { if (nub && e.pointerId === nub.id) endNub(true); });
+
+// ---------- Layout ----------
+// The Mac screen rarely matches the device's shape, so it's letterboxed. Put the toolbar and
+// the stick in those black bars (landscape: down the sides; portrait: above/below) so they never
+// cover the Mac; overlay them only when there's no room or the view is zoomed in.
+let tpCustom = (() => { try { return JSON.parse(store.get("jump.stickPos") || "null"); } catch { return null; } })();
+// Where the user dropped the toolbar (its centre, as a fraction of the screen); null = automatic.
+let tbCustom = (() => { try { return JSON.parse(store.get("jump.toolbarPos") || "null"); } catch { return null; } })();
+let tbMoving = false;
+let tbSnapUntil = 0;
+
+function safeInsets() {
+  const cs = getComputedStyle(ui.safeProbe);
+  return { top: parseFloat(cs.paddingTop) || 0, right: parseFloat(cs.paddingRight) || 0,
+           bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0 };
+}
+
+// ---------- Toolbar docking ----------
+// Same rules as the Android app (ToolbarPlacement): one clean line along the edge it is docked
+// to (a column on the left or right, a row along the top or bottom) on a translucent panel.
+// When one line doesn't fit the buttons shrink, then go icon-only; only when even that is too
+// small (keyboard up in landscape) does it wrap, so every button stays on screen. It steps
+// around the stick.
+const TILE_PITCH = 58, COMPACT_PITCH = 44, TB_PAD = 5, TB_MARGIN = 6;
+const MIN_LABEL_SCALE = 0.8, MIN_COMPACT_SCALE = 0.7;
+const clampTo = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
+
+function nearestEdge(x, y, W, H) {
+  const d = { left: x, right: W - x, top: y, bottom: H - y };
+  return Object.keys(d).reduce((a, b) => (d[b] < d[a] ? b : a));
+}
+
+/** What's left along the edge clear of the stick: above/below it for a column (beside it when
+ *  there's no room), beside it for a row (just past it when beside is too short for one line). */
+function clearOfStick(region, edge, avoid, count) {
+  if (!avoid) return region;
+  const vertical = edge === "left" || edge === "right", thick = TILE_PITCH + 2 * TB_PAD;
+  const strip = edge === "left" ? { ...region, r: region.l + thick } : edge === "right" ? { ...region, l: region.r - thick }
+    : edge === "top" ? { ...region, b: region.t + thick } : { ...region, t: region.b - thick };
+  if (avoid.r <= strip.l || avoid.l >= strip.r || avoid.b <= strip.t || avoid.t >= strip.b) return region;
+  if (vertical) {
+    const above = { ...region, b: avoid.t - TB_MARGIN }, below = { ...region, t: avoid.b + TB_MARGIN };
+    const pick = above.b - above.t >= below.b - below.t ? above : below;
+    if (pick.b - pick.t >= COMPACT_PITCH * 3 + 2 * TB_PAD) return pick;
+    return edge === "left" ? { ...region, l: avoid.r + TB_MARGIN } : { ...region, r: avoid.l - TB_MARGIN };
+  }
+  const left = { ...region, r: avoid.l - TB_MARGIN }, right = { ...region, l: avoid.r + TB_MARGIN };
+  const beside = left.r - left.l >= right.r - right.l ? left : right;
+  if (beside.r - beside.l - 2 * TB_PAD >= count * COMPACT_PITCH * MIN_COMPACT_SCALE) return beside;
+  return edge === "bottom" ? { ...region, b: avoid.t - TB_MARGIN } : { ...region, t: avoid.b + TB_MARGIN };
+}
+
+/** One line if at all possible; else the fewest lines at the largest (icon-only) size. */
+function toolbarGrid(count, across, along) {
+  const full = Math.min(1, across / TILE_PITCH, along / (count * TILE_PITCH));
+  if (full >= MIN_LABEL_SCALE) return { lines: 1, perLine: count, scale: full, compact: false };
+  const small = Math.min(1, across / COMPACT_PITCH, along / (count * COMPACT_PITCH));
+  if (small >= MIN_COMPACT_SCALE) return { lines: 1, perLine: count, scale: small, compact: true };
+  let pick = null;
+  for (let lines = 2; lines <= 5; lines++) {
+    const perLine = Math.max(1, Math.ceil(count / lines));
+    const scale = Math.min(1, across / (lines * COMPACT_PITCH), along / (perLine * COMPACT_PITCH));
+    if (!pick || scale > pick.scale + 0.001) pick = { lines, perLine, scale, compact: true };
+  }
+  return pick;
+}
+
+/** Docked to an edge of bounds, centred at along as far as it fits (or following along freely
+ *  while dragged). */
+function placeToolbar({ edge, count, bounds, along, avoid = null, floating = false }) {
+  const vertical = edge === "left" || edge === "right";
+  const inner = { l: bounds.l + TB_MARGIN, t: bounds.t + TB_MARGIN, r: bounds.r - TB_MARGIN, b: bounds.b - TB_MARGIN };
+  const region = floating ? inner : clearOfStick(inner, edge, avoid, count);
+  const across = (vertical
+    ? Math.min(region.r - region.l, Math.max(3 * COMPACT_PITCH, (bounds.r - bounds.l) / 3))
+    : Math.min(region.b - region.t, Math.max(2 * COMPACT_PITCH, (bounds.b - bounds.t) / 3))) - 2 * TB_PAD;
+  const length = (vertical ? region.b - region.t : region.r - region.l) - 2 * TB_PAD;
+  const grid = toolbarGrid(count, across, length);
+  const pitch = (grid.compact ? COMPACT_PITCH : TILE_PITCH) * grid.scale;
+  const w = (vertical ? grid.lines : grid.perLine) * pitch + 2 * TB_PAD;
+  const h = (vertical ? grid.perLine : grid.lines) * pitch + 2 * TB_PAD;
+  const p = { edge, vertical, ...grid, pitch, w, h };
+  if (floating) {
+    p.x = clampTo(along.x - w / 2, bounds.l, bounds.r - w);
+    p.y = clampTo(along.y - h / 2, bounds.t, bounds.b - h);
+  } else {
+    const x = clampTo(along.x - w / 2, region.l, region.r - w), y = clampTo(along.y - h / 2, region.t, region.b - h);
+    p.x = edge === "left" ? region.l : edge === "right" ? region.r - w : x;
+    p.y = edge === "top" ? region.t : edge === "bottom" ? region.b - h : y;
+  }
+  return p;
+}
+
+function layoutViewer() {
+  if (!ui.viewer.classList.contains("active")) return;
+  const W = innerWidth;
+  const H = window.visualViewport ? visualViewport.height : innerHeight; // above the soft keyboard
+  const safe = safeInsets();
+  const r = videoRect();
+  const barsFree = ui.video.videoWidth > 0 && view.scale <= 1.001;
+  const side = barsFree ? Math.min(r.left, W - r.left - r.width) : 0;
+  const top = barsFree ? r.top : 0;
+  const bottom = barsFree ? H - r.top - r.height : 0;
+  // A toolbar dragged to the stick's side takes that side; the stick moves to the other one
+  // (unless the stick itself was dragged somewhere).
+  const dockEdge = tbCustom ? nearestEdge(tbCustom.x * W, tbCustom.y * H, W, H) : null;
+  let stickRight = tpPlacement !== "left";
+  if (!tpCustom && ((dockEdge === "right" && stickRight) || (dockEdge === "left" && !stickRight))) stickRight = !stickRight;
+  const kbarH = keyboardBarHeight(); // the on-screen keyboard's bar, when typing
+  const floor = kbarH ? H - kbarH : H;
+
+  // Stick: where it was dragged, else in its bar (sized to fit), else in the corner; above the
+  // keyboard bar while typing.
+  let d = 128, cx, cy;
+  if (tpCustom) {
+    cx = tpCustom.x * W;
+    cy = tpCustom.y * H;
+  } else if (side >= 80) {
+    d = Math.min(128, side - 14);
+    cx = stickRight ? W - side / 2 : side / 2;
+    cy = floor - (kbarH ? 0 : Math.max(safe.bottom, 12)) - 12 - d / 2;
+  } else if (bottom >= 100) {
+    d = Math.min(128, bottom - 20);
+    cx = stickRight ? W - 24 - d / 2 : 24 + d / 2;
+    cy = kbarH ? floor - 12 - d / 2 : H - bottom / 2;
+  } else {
+    cx = stickRight ? W - Math.max(safe.right, 24) - d / 2 : Math.max(safe.left, 24) + d / 2;
+    cy = floor - (kbarH ? 12 : Math.max(safe.bottom, 24)) - d / 2;
+  }
+  cx = Math.min(Math.max(cx, d / 2), W - d / 2);
+  cy = Math.min(Math.max(cy, d / 2), H - d / 2);
+  Object.assign(ui.tp.style, { left: `${cx - d / 2}px`, top: `${cy - d / 2}px`, width: `${d}px`, height: `${d}px` });
+
+  // Toolbar: one line along an edge — where it was dragged (the nearest of the four edges; it
+  // follows the finger while moving), else the side opposite the stick in landscape on a touch
+  // screen, else the top.
+  const tb = ui.toolbar;
+  const count = [...tb.children].filter((el) => el.style.display !== "none").length;
+  const bounds = { l: safe.left, t: safe.top, r: W - safe.right, b: kbarH ? H - kbarH : H - safe.bottom };
+  const stickBox = tpPlacement === "hidden" ? null : { l: cx - d / 2, t: cy - d / 2, r: cx + d / 2, b: cy + d / 2 };
+  let edge, along;
+  if (tbCustom) {
+    along = { x: tbCustom.x * W, y: tbCustom.y * H };
+    edge = dockEdge;
+  } else if (side >= 64 || (W > H && navigator.maxTouchPoints > 0)) {
+    edge = stickRight ? "left" : "right"; // a top row in landscape would cover the Mac's menu bar
+    along = { x: 0, y: (bounds.t + bounds.b) / 2 };
+  } else {
+    edge = "top";
+    along = { x: W / 2, y: 0 };
+  }
+  const place = placeToolbar({ edge, count, bounds, along, avoid: stickBox, floating: tbMoving });
+  // Glide into place only right after a drop, not on every resize or when the viewer opens.
+  const snapping = !tbMoving && performance.now() < tbSnapUntil;
+  tb.className = [tbMoving ? "moving" : "", snapping ? "snap" : ""].join(" ").trim();
+  tb.style.cssText = "";
+  const gap = 2 * place.scale, tile = place.pitch - gap;
+  tb.classList.toggle("compact", place.compact);
+  Object.assign(tb.style, {
+    left: `${place.x}px`, top: `${place.y}px`, width: `${place.w}px`, height: `${place.h}px`,
+    gap: `${gap}px`, gridAutoFlow: place.vertical ? "column" : "row",
+    [place.vertical ? "gridTemplateRows" : "gridTemplateColumns"]: `repeat(${place.perLine}, ${tile}px)`,
+  });
+  tb.style.setProperty("--tile", `${tile}px`);
+  tb.style.setProperty("--tile-scale", place.scale);
+  for (const span of tb.querySelectorAll(".tile span")) fitLabel(span);
+  const toolbarSide = place.vertical ? place.edge : null;
+  ui.stats.style.left = toolbarSide === "left" ? `${place.x + place.w + 8}px` : "";
+  ui.stats.style.right = toolbarSide === "right" ? `${W - place.x + 8}px` : "";
+  setTile(ui.btnMouse, "🖱", tpCustom && tpPlacement !== "hidden" ? "직접" : { right: "오른쪽", left: "왼쪽", hidden: "끔" }[tpPlacement]);
+}
+
+// Drag the stick by its corner handle; the spot is remembered until 🖱 is tapped.
+let handleDrag = null;
+ui.tpHandle.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  capture(ui.tpHandle, e);
+  const r = ui.tp.getBoundingClientRect();
+  handleDrag = { id: e.pointerId, dx: e.clientX - (r.left + r.width / 2), dy: e.clientY - (r.top + r.height / 2) };
+});
+ui.tpHandle.addEventListener("pointermove", (e) => {
+  if (!handleDrag || e.pointerId !== handleDrag.id) return;
+  e.stopPropagation();
+  const H = window.visualViewport ? visualViewport.height : innerHeight;
+  tpCustom = { x: (e.clientX - handleDrag.dx) / innerWidth, y: (e.clientY - handleDrag.dy) / H };
+  layoutViewer();
+});
+for (const type of ["pointerup", "pointercancel"]) {
+  ui.tpHandle.addEventListener(type, (e) => {
+    if (!handleDrag) return;
+    e.stopPropagation();
+    handleDrag = null;
+    store.set("jump.stickPos", JSON.stringify(tpCustom));
+  });
+}
+
+// Long-press the toolbar to move it: drag to place it, or let go without moving to put it
+// back in its automatic spot. Short taps still press the buttons.
+let tbPress = null;
+let suppressToolbarClick = false;
+ui.toolbar.addEventListener("pointerdown", (e) => {
+  const start = { x: e.clientX, y: e.clientY };
+  tbPress = {
+    id: e.pointerId, start, moved: false,
+    timer: setTimeout(() => {
+      if (!tbPress) return;
+      tbMoving = true;
+      capture(ui.toolbar, e); // only now, so ordinary taps still reach the tiles
+      const box = ui.toolbar.getBoundingClientRect();
+      tbPress.grab = { x: start.x - (box.left + box.width / 2), y: start.y - (box.top + box.height / 2) };
+      layoutViewer();
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, LONG_PRESS_MS),
+  };
+});
+ui.toolbar.addEventListener("pointermove", (e) => {
+  if (!tbPress || e.pointerId !== tbPress.id) return;
+  if (!tbMoving) {
+    if (Math.hypot(e.clientX - tbPress.start.x, e.clientY - tbPress.start.y) > DRAG_SLOP) clearTimeout(tbPress.timer);
+    return;
+  }
+  if (Math.hypot(e.clientX - tbPress.start.x, e.clientY - tbPress.start.y) > DRAG_SLOP) tbPress.moved = true;
+  if (!tbPress.moved) return;
+  const H = window.visualViewport ? visualViewport.height : innerHeight;
+  tbCustom = { x: (e.clientX - tbPress.grab.x) / innerWidth, y: (e.clientY - tbPress.grab.y) / H };
+  layoutViewer();
+});
+for (const type of ["pointerup", "pointercancel"]) {
+  ui.toolbar.addEventListener(type, () => {
+    if (!tbPress) return;
+    clearTimeout(tbPress.timer);
+    if (tbMoving) {
+      if (!tbPress.moved) tbCustom = null; // held without dragging: back to automatic
+      store.set("jump.toolbarPos", JSON.stringify(tbCustom));
+      tbMoving = false;
+      tbSnapUntil = performance.now() + 300;
+      suppressToolbarClick = true; // the release mustn't also press a tile
+      setTimeout(() => { suppressToolbarClick = false; }, 400);
+      layoutViewer();
+    }
+    tbPress = null;
+  });
+}
+ui.toolbar.addEventListener("click", (e) => {
+  if (!suppressToolbarClick) return;
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
+
+window.addEventListener("resize", () => { refitView(); drawCursor(); });
+if (window.visualViewport) visualViewport.addEventListener("resize", layoutViewer);
+ui.video.addEventListener("resize", () => { refitView(); layoutViewer(); drawCursor(); });
+
+// ---------- Keyboard ----------
+// Hardware keys go as physical HID codes (the Mac's own input source does Korean composition).
+// The soft keyboard types into a hidden textarea; committed text is sent as text.
+const SENTINEL = " ";
+let composing = false;
+
+// On-screen keyboard, two ways to type (the choice is remembered):
+//  바로   – straight onto the Mac as you type, like Chrome Remote Desktop (hidden #kbd).
+//  입력창 – into a box above the keyboard first; 전송 puts it where the Mac's cursor is.
+let keyboardMode = store.get("jump.keyboardMode") === "compose" ? "compose" : "direct";
+let keyboardBlurAt = 0;
+const keyboardOn = () => document.activeElement === ui.kbd || document.activeElement === ui.composeInput;
+
+function setKeyboard(on) {
+  // Show the right field first: a hidden (display: none) field can't take the focus.
+  ui.kbar.classList.toggle("direct", keyboardMode === "direct");
+  ui.kbar.classList.toggle("compose", keyboardMode === "compose");
+  if (on) ui.kbar.classList.add("show");
+  if (on && keyboardMode === "compose") {
+    ui.composeInput.focus();
+  } else if (on) {
+    ui.kbd.value = SENTINEL;
+    ui.kbd.focus();
+  } else {
+    ui.kbd.blur();
+    ui.composeInput.blur();
+  }
+  updateKeyboardBar();
+}
+
+function updateKeyboardBar() {
+  const on = ui.viewer.classList.contains("active") && keyboardOn();
+  ui.kbar.classList.toggle("show", on);
+  ui.kbar.classList.toggle("direct", keyboardMode === "direct");
+  ui.kbar.classList.toggle("compose", keyboardMode === "compose");
+  for (const button of ui.kbar.querySelectorAll(".seg button")) button.classList.toggle("on", button.dataset.mode === keyboardMode);
+  ui.btnKbd.classList.toggle("on", on);
+  positionKeyboardBar();
+  layoutViewer();
+}
+
+/** Sits the bar right on top of the keyboard (the visual viewport's bottom). */
+function positionKeyboardBar() {
+  if (!ui.kbar.classList.contains("show")) return;
+  const vv = window.visualViewport;
+  const bottom = vv ? vv.offsetTop + vv.height : innerHeight;
+  ui.kbar.style.top = `${bottom - ui.kbar.offsetHeight}px`;
+}
+const keyboardBarHeight = () => (ui.kbar.classList.contains("show") ? ui.kbar.offsetHeight : 0);
+
+function setKeyboardMode(mode) {
+  if (mode === keyboardMode) return;
+  keyboardMode = mode;
+  store.set("jump.keyboardMode", mode);
+  setKeyboard(true); // moves the focus to the other field; the keyboard stays up
+}
+
+/** Runs [action] on a tap without taking the focus, so the on-screen keyboard stays open. */
+function tapKeepingKeyboard(element, action) {
+  element.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+  element.addEventListener("touchend", (e) => { e.preventDefault(); action(); }, { passive: false });
+  element.addEventListener("mousedown", (e) => e.preventDefault());
+  element.addEventListener("click", action); // mouse and keyboard (touch never gets here)
+}
+
+for (const input of [ui.kbd, ui.composeInput]) {
+  input.addEventListener("focus", () => updateKeyboardBar());
+  input.addEventListener("blur", () => {
+    keyboardBlurAt = performance.now();
+    setTimeout(updateKeyboardBar, 0); // after the focus has landed wherever it goes
+  });
+}
+for (const button of ui.kbar.querySelectorAll(".seg button")) tapKeepingKeyboard(button, () => setKeyboardMode(button.dataset.mode));
+for (const button of ui.kbar.querySelectorAll("button.key")) tapKeepingKeyboard(button, () => keyTap(HID(button.dataset.key)));
+tapKeepingKeyboard(ui.composeEnter, () => keyTap(HID("Enter")));
+tapKeepingKeyboard(ui.composeSend, sendCompose);
+tapKeepingKeyboard(ui.composeUndo, eraseLastSent);
+
+// What 전송 put on the Mac (lengths in characters, newest last), so ✕ can take it back with
+// Backspace; forgotten as soon as the Mac is clicked.
+let sentChunks = [];
+const characterCount = (text) => (window.Intl && Intl.Segmenter ? [...new Intl.Segmenter().segment(text)].length : [...text].length);
+
+/** 입력창: the whole text goes to the Mac's cursor, pasted, so line breaks stay line breaks. */
+function sendCompose() {
+  const text = ui.composeInput.value;
+  if (!text) return;
+  send({ t: "text", s: text, paste: true });
+  sentChunks = [...sentChunks, characterCount(text)].slice(-20);
+  ui.composeUndo.disabled = false;
+  ui.composeInput.value = "";
+  fitComposeInput();
+}
+
+/** ✕: erases the last 전송 on the Mac, one Backspace per character; again for the one before. */
+function eraseLastSent() {
+  const count = Math.min(sentChunks.pop() || 0, 5000);
+  for (let i = 0; i < count; i++) keyTap(HID("Backspace"));
+  ui.composeUndo.disabled = sentChunks.length === 0;
+}
+
+function forgetSent() {
+  if (!sentChunks.length) return;
+  sentChunks = [];
+  ui.composeUndo.disabled = true;
+}
+
+function fitComposeInput() {
+  const input = ui.composeInput;
+  input.style.height = "38px";
+  input.style.height = `${Math.min(input.scrollHeight, 94)}px`; // up to about three lines
+  ui.composeSend.disabled = !input.value;
+  positionKeyboardBar();
+  layoutViewer();
+}
+ui.composeInput.addEventListener("input", fitComposeInput);
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", positionKeyboardBar);
+  visualViewport.addEventListener("scroll", positionKeyboardBar);
+}
+
+function keyTap(code) {
+  send({ t: "key", code, down: true });
+  send({ t: "key", code, down: false });
+}
+
+const ownsKeys = (target) => target instanceof Node && (ui.sheet.contains(target) || target === ui.composeInput);
+
+// Modifiers the Mac currently holds down (HID codes), so each key press can carry the Shift,
+// Control, Option and Command the browser says are down, even when the modifier's own key event
+// never came (iPad keyboards don't always report the right-hand Shift, a key held across a
+// focus change, …).
+const heldModifiers = new Set();
+// Windows / Android / Linux keyboards: Ctrl is the shortcut key (Ctrl+C, Ctrl+V, Ctrl+A), which on
+// the Mac is ⌘. With this on, Ctrl goes to the Mac as ⌘ and the Windows key as Control.
+const IS_APPLE_CLIENT = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "") || /iPhone|iPad|Macintosh/.test(navigator.userAgent);
+const ctrlAsCmd = () => ui.optCtrlCmd.checked;
+const SWAPPED = { ControlLeft: "MetaLeft", ControlRight: "MetaRight", MetaLeft: "ControlLeft", MetaRight: "ControlRight" };
+const macCode = (code) => (ctrlAsCmd() && SWAPPED[code]) || code;
+const modifierPairs = () => ctrlAsCmd()
+  ? [["shiftKey", "ShiftLeft", "ShiftRight"], ["ctrlKey", "MetaLeft", "MetaRight"],
+     ["altKey", "AltLeft", "AltRight"], ["metaKey", "ControlLeft", "ControlRight"]]
+  : [["shiftKey", "ShiftLeft", "ShiftRight"], ["ctrlKey", "ControlLeft", "ControlRight"],
+     ["altKey", "AltLeft", "AltRight"], ["metaKey", "MetaLeft", "MetaRight"]];
+function syncModifiers(e) {
+  for (const [prop, left, right] of modifierPairs()) {
+    const held = heldModifiers.has(HID(left)) || heldModifiers.has(HID(right));
+    if (e[prop] && !held) {
+      send({ t: "key", code: HID(left), down: true });
+      heldModifiers.add(HID(left));
+    } else if (!e[prop] && held) {
+      for (const code of [HID(left), HID(right)]) {
+        if (heldModifiers.delete(code)) send({ t: "key", code, down: false });
+      }
+    }
+  }
+}
+const isModifierCode = (code) => code >= 0x700e0 && code <= 0x700e7;
+
+window.addEventListener("keydown", (e) => {
+  if (!ui.viewer.classList.contains("active") || ownsKeys(e.target)) return;
+  const code = HID(macCode(e.code));
+  const inSoftKeyboard = document.activeElement === ui.kbd;
+  if (inSoftKeyboard && (e.isComposing || e.keyCode === 229 || !code)) return; // IME owns it
+  if (!code) return;
+  if (inSoftKeyboard && !["Enter", "Backspace", "Tab", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.code)
+      && !e.metaKey && !e.ctrlKey) return; // printable soft-keyboard keys arrive as text
+  if (isModifierCode(code)) heldModifiers.add(code);
+  else syncModifiers(e);
+  if (clipboard.startPaste(e)) return; // no preventDefault: the browser's paste event comes next
+  e.preventDefault();
+  send({ t: "key", code, down: true });
+});
+
+window.addEventListener("keyup", (e) => {
+  if (!ui.viewer.classList.contains("active") || ownsKeys(e.target)) return;
+  const code = HID(macCode(e.code));
+  if (!code) return;
+  if (document.activeElement === ui.kbd && (e.isComposing || e.keyCode === 229)) return;
+  e.preventDefault();
+  if (e.code === "KeyV" && clipboard.swallowKeyUp) { clipboard.swallowKeyUp = false; return; } // sent with the paste
+  if (isModifierCode(code)) {
+    // Some keyboards report the right-hand key going up as the left one: release the pair.
+    const pair = modifierPairs().find(([, left, right]) => code === HID(left) || code === HID(right));
+    for (const side of [HID(pair[1]), HID(pair[2])]) {
+      if (heldModifiers.delete(side) || side === code) send({ t: "key", code: side, down: false });
+    }
+    return;
+  }
+  send({ t: "key", code, down: false });
+});
+
+window.addEventListener("blur", () => {
+  // Don't leave modifiers stuck on the Mac when the tab loses focus.
+  for (const code of ["ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight"]) {
+    send({ t: "key", code: HID(code), down: false });
+  }
+  heldModifiers.clear();
+});
+
+ui.kbd.addEventListener("compositionstart", () => { composing = true; });
+ui.kbd.addEventListener("compositionupdate", (e) => { ui.kbarPreview.textContent = e.data || ""; });
+ui.kbd.addEventListener("compositionend", () => {
+  composing = false;
+  ui.kbarPreview.textContent = "";
+  flushSoftKeyboard();
+});
+ui.kbd.addEventListener("input", () => { if (!composing) flushSoftKeyboard(); });
+
+function flushSoftKeyboard() {
+  const value = ui.kbd.value;
+  if (value.length < SENTINEL.length) {
+    keyTap(HID("Backspace"));
+  } else if (value.length > SENTINEL.length) {
+    const text = value.slice(SENTINEL.length);
+    if (text === "\n") keyTap(HID("Enter"));
+    else send({ t: "text", s: text });
+  }
+  ui.kbd.value = SENTINEL;
+}
+
+// ---------- Toolbar ----------
+// Tapping the tile can blur the field first (iOS): count "just closed by this tap" as open.
+ui.btnKbd.addEventListener("click", () => setKeyboard(!(keyboardOn() || performance.now() - keyboardBlurAt < 400)));
+function setSpeed(speed) {
+  tpSpeed = speed;
+  store.set("jump.speed", speed);
+  setTile(ui.btnSpeed, "🎚", TP_SPEEDS[speed].label);
+}
+setSpeed(tpSpeed);
+ui.btnSpeed.addEventListener("click", () => {
+  const order = Object.keys(TP_SPEEDS);
+  setSpeed(order[(order.indexOf(tpSpeed) + 1) % order.length]);
+});
+ui.btnMouse.addEventListener("click", () => {
+  tpCustom = null; // back to automatic placement
+  store.set("jump.stickPos", "null");
+  setPadPlacement(TP_PLACEMENTS[(TP_PLACEMENTS.indexOf(tpPlacement) + 1) % TP_PLACEMENTS.length]);
+});
+ui.btnFill.addEventListener("click", () => setFill(!view.fill));
+setTile(ui.btnFill, view.fill ? "⤡" : "⤢", view.fill ? "채움" : "맞춤");
+ui.btnFill.classList.toggle("on", view.fill);
+ui.btnSound.addEventListener("click", () => {
+  audio.unlock();
+  audio.setMuted(!audio.muted);
+});
+audio.setMuted(audio.muted);
+// ---------- Settings sheet ----------
+const pwFields = [ui.pwCurrent, ui.pwNew, ui.pwConfirm];
+function setPwStatus(text, kind = "") {
+  ui.pwStatus.textContent = text;
+  ui.pwStatus.className = kind;
+}
+function openSettings(open) {
+  ui.sheet.classList.toggle("show", open);
+  ui.btnSettings.classList.toggle("on", open);
+  ui.optStats.checked = ui.stats.classList.contains("show");
+  if (!open) {
+    for (const field of pwFields) field.value = "";
+    for (const button of ui.sheet.querySelectorAll(".eye")) showPassword(button, false);
+    setPwStatus("");
+    if (ui.sheet.contains(document.activeElement)) document.activeElement.blur();
+  }
+}
+ui.btnSettings.addEventListener("click", () => openSettings(!ui.sheet.classList.contains("show")));
+ui.sheetClose.addEventListener("click", () => openSettings(false));
+ui.sheet.addEventListener("click", (e) => { if (e.target === ui.sheet) openSettings(false); });
+ui.optStats.addEventListener("change", () => ui.stats.classList.toggle("show", ui.optStats.checked));
+ui.optClip.checked = store.get("jump.clip") !== "0";
+// On by default on a Windows / Android / Linux keyboard, off on Apple devices (they have ⌘).
+ui.optCtrlCmd.checked = store.get("jump.ctrlAsCmd") ? store.get("jump.ctrlAsCmd") === "1" : !IS_APPLE_CLIENT;
+ui.optCtrlCmd.addEventListener("change", () => {
+  store.set("jump.ctrlAsCmd", ui.optCtrlCmd.checked ? "1" : "0");
+  // Don't leave a Control or ⌘ held on the Mac under the old mapping.
+  for (const code of ["ControlLeft", "ControlRight", "MetaLeft", "MetaRight"]) send({ t: "key", code: HID(code), down: false });
+  heldModifiers.clear();
+});
+ui.optClip.addEventListener("change", () => store.set("jump.clip", ui.optClip.checked ? "1" : "0"));
+
+// ---------- Toast ----------
+let toastTimer = null;
+function toast(text) {
+  ui.toast.textContent = text;
+  ui.toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ui.toast.classList.remove("show"), 1600);
+}
+
+// ---------- Clipboard ----------
+// Mac -> here: text the Mac copies is put on this device's clipboard, right away where the
+// browser allows it, else on the next tap or key press (Safari and plain http need a gesture).
+// Here -> Mac: Cmd/Ctrl+V first sends this device's clipboard, then the keystroke, so the Mac
+// pastes what was copied here.
+const CLIP_MAX_BYTES = 60000;
+const clipboard = {
+  pending: null,
+  last: null, // text both sides already have: never bounced back and forth
+  pasteKey: null, // { code, timer } while waiting for the browser's paste event
+  swallowKeyUp: false, // the V of a taken-over paste: its release was already sent
+  get on() { return ui.optClip.checked; },
+
+  receive(text) {
+    if (!this.on || typeof text !== "string" || text === this.last) return;
+    this.pending = text;
+    if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
+      navigator.clipboard.writeText(text).then(() => this.done(text), () => {});
+    }
+  },
+
+  /** Called from inside a user gesture. */
+  flush() {
+    const text = this.pending;
+    if (text == null) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => this.done(text), () => { if (copyWithSelection(text)) this.done(text); });
+    } else if (copyWithSelection(text)) {
+      this.done(text);
+    }
+  },
+
+  done(text) {
+    if (this.pending !== text) return;
+    this.pending = null;
+    this.last = text;
+    toast("📋 Mac에서 복사한 내용을 가져왔습니다");
+  },
+
+  /** Cmd/Ctrl+V pressed on the viewer: returns true when it takes over the keystroke. */
+  startPaste(e) {
+    if (!this.on || this.pasteKey || e.code !== "KeyV" || !(e.metaKey || e.ctrlKey) || e.altKey) return false;
+    // Let the browser fire "paste" (so we can read what was copied here); send the V after.
+    this.pasteKey = { code: HID("KeyV"), timer: setTimeout(() => this.finishPaste(null), 150) };
+    this.swallowKeyUp = true;
+    return true;
+  },
+
+  finishPaste(text) {
+    const key = this.pasteKey;
+    if (!key) return;
+    clearTimeout(key.timer);
+    this.pasteKey = null;
+    if (text) {
+      if (new TextEncoder().encode(text).length <= CLIP_MAX_BYTES) {
+        send({ t: "clip", text });
+        this.last = text;
+      }
+      else toast("복사한 내용이 너무 커서 Mac으로 보내지 않았습니다");
+    }
+    send({ t: "key", code: key.code, down: true });
+    send({ t: "key", code: key.code, down: false });
+  },
+};
+for (const type of ["pointerup", "keydown", "touchend"]) {
+  window.addEventListener(type, () => clipboard.flush(), true);
+}
+document.addEventListener("paste", (e) => {
+  if (!clipboard.pasteKey) return;
+  e.preventDefault();
+  clipboard.finishPaste(e.clipboardData ? e.clipboardData.getData("text/plain") : null);
+});
+
+/** Copy without the async Clipboard API (plain http, older Safari): select text and copy. */
+function copyWithSelection(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;";
+  const active = document.activeElement;
+  document.body.appendChild(area);
+  area.select();
+  area.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch {}
+  area.remove();
+  if (active && active !== document.body && active.focus) active.focus({ preventScroll: true });
+  return ok;
+}
+
+// ---------- Monitors ----------
+function updateDisplayTile() {
+  const info = session && session.displays;
+  const list = info ? info.list : [];
+  ui.btnDisplay.style.display = list.length > 1 ? "" : "none";
+  if (list.length > 1) {
+    const index = Math.max(0, list.findIndex((d) => d.id === info.current));
+    setTile(ui.btnDisplay, "🖥", `모니터\n${index + 1}/${list.length}`);
+    ui.btnDisplay.title = list[index].name;
+  }
+  layoutViewer();
+}
+ui.btnDisplay.addEventListener("click", () => {
+  const info = session && session.displays;
+  if (!info || info.list.length < 2) return;
+  const index = info.list.findIndex((d) => d.id === info.current);
+  const next = info.list[(index + 1) % info.list.length];
+  send({ t: "selectDisplay", id: next.id });
+  toast(`🖥 ${next.name}`);
+});
+ui.sheetForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const current = ui.pwCurrent.value;
+  const next = ui.pwNew.value.trim();
+  if (!current) return setPwStatus("현재 비밀번호를 입력하세요", "error");
+  if (next.length < 8) return setPwStatus("새 비밀번호는 8자 이상이어야 합니다", "error");
+  if (next !== ui.pwConfirm.value.trim()) return setPwStatus("새 비밀번호 확인이 다릅니다", "error");
+  if (!session) return setPwStatus("연결되어 있지 않습니다", "error");
+  ui.pwSave.disabled = true;
+  setPwStatus("변경 중…");
+  const result = await session.changePassword(current, next);
+  ui.pwSave.disabled = false;
+  if (!result.ok) return setPwStatus(result.error || "변경하지 못했습니다", "error");
+  session.password = next;
+  store.set("jump.password", next);
+  ui.password.value = next;
+  for (const field of pwFields) field.value = "";
+  setPwStatus("변경했습니다. 다음 접속부터 새 비밀번호로 들어옵니다.", "ok");
+});
+const standalone = navigator.standalone === true || matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches;
+// Home-screen apps are already full screen; iPhone Safari has no element fullscreen at all.
+const canFullscreen = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+if (standalone || !canFullscreen) ui.btnFull.style.display = "none";
+ui.btnFull.addEventListener("click", () => {
+  const el = document.documentElement;
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } else {
+    // Chrome/Edge: in full screen, also take shortcuts like Cmd+W/T/N and Esc for the Mac
+    // (hold Esc to leave full screen).
+    Promise.resolve((el.requestFullscreen || el.webkitRequestFullscreen).call(el))
+      .then(() => navigator.keyboard && navigator.keyboard.lock && navigator.keyboard.lock())
+      .catch(() => {});
+  }
+});
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement && navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
+});
+ui.btnClose.addEventListener("click", () => {
+  if (session) session.close();
+  session = null;
+  cancelReconnect();
+  leaveViewer();
+  setStatus("연결을 끊었습니다.");
+});
+
+</script>
+</body>
+</html>
