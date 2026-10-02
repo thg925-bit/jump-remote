@@ -3,9 +3,12 @@ import Carbon.HIToolbox
 import CoreGraphics
 
 /// Turns input-channel messages (see PROTOCOL.md) into synthetic CGEvents.
-/// Not thread-safe: call `handle` and `releaseAll` from one thread.
+///
+/// Everything runs in order on one serial queue. Messages arrive on WebRTC's network thread, and a
+/// paste (pasteboard, then ⌘V) must never be overtaken by keys typed right after it.
 final class InputInjector {
-    var displayID: CGDirectDisplayID = CGMainDisplayID()
+    private let queue = DispatchQueue(label: "jump.input", qos: .userInteractive)
+    private var displayID: CGDirectDisplayID = CGMainDisplayID()
 
     private let source: CGEventSource?
     private var buttonsDown = Set<Int>()
@@ -22,6 +25,11 @@ final class InputInjector {
     private var lastPoint: CGPoint = .zero
     private var lastClick: (time: TimeInterval, button: Int, point: CGPoint, count: Int)?
     private var scrollRemainder: CGPoint = .zero
+    /// The user's own clipboard while a paste's restore is pending, so pastes in quick
+    /// succession put back what was there before the first one, not the previous paste.
+    private var pasteSaved: [NSPasteboardItem]?
+    private var pasteChangeCount = 0
+    private var pasteGeneration = 0
 
     init() {
         source = CGEventSource(stateID: .hidSystemState)
@@ -29,7 +37,25 @@ final class InputInjector {
         source?.localEventsSuppressionInterval = 0
     }
 
+    /// Input coordinates map onto this display from now on.
+    func setDisplay(_ id: CGDirectDisplayID) {
+        queue.async { self.displayID = id }
+    }
+
+    /// Queues one input message.
     func handle(_ message: [String: Any]) {
+        queue.async {
+            SystemAwake.noteUserActivity()
+            self.process(message)
+        }
+    }
+
+    /// Runs `work` in order with the input (e.g. the client's clipboard ahead of its ⌘V).
+    func enqueue(_ work: @escaping () -> Void) {
+        queue.async(execute: work)
+    }
+
+    private func process(_ message: [String: Any]) {
         switch message["t"] as? String {
         case "move":
             move(to: point(from: message))
@@ -40,6 +66,12 @@ final class InputInjector {
         case "scroll":
             scroll(dx: number(message["dx"]), dy: number(message["dy"]))
         case "key":
+            // 한/영 (HID LANG1) of a PC keyboard: macOS has no use for that key, so switch the
+            // input source directly.
+            if Int(number(message["code"])) == KeyMap.hangulKey {
+                if (message["down"] as? Bool) ?? true { InputSource.toggleKorean() }
+                return
+            }
             key(message)
         case "text":
             // "paste": the viewer's compose box, where line breaks are text, not Return presses.
@@ -49,8 +81,13 @@ final class InputInjector {
         }
     }
 
-    /// Lifts every held button and key so nothing stays stuck after a disconnect.
+    /// Lifts every held button and key so nothing stays stuck after a disconnect. Waits for
+    /// the input still queued.
     func releaseAll() {
+        queue.sync { releaseHeld() }
+    }
+
+    private func releaseHeld() {
         for button in buttonsDown {
             post(mouse: mouseType(button: button, down: false), button: button, at: lastPoint)
         }
@@ -215,35 +252,40 @@ final class InputInjector {
         }
     }
 
+    /// Puts `text` on the pasteboard, presses ⌘V, and half a second later puts back what the
+    /// user had there (unless something else was copied meanwhile).
     private func paste(_ text: String) {
-        let source = self.source
-        DispatchQueue.main.async {
-            let pasteboard = NSPasteboard.general
-            let saved: [NSPasteboardItem] = (pasteboard.pasteboardItems ?? []).map { item in
+        let pasteboard = NSPasteboard.general
+        if pasteSaved == nil || pasteboard.changeCount != pasteChangeCount {
+            pasteSaved = (pasteboard.pasteboardItems ?? []).map { item in
                 let copy = NSPasteboardItem()
                 for type in item.types {
                     if let data = item.data(forType: type) { copy.setData(data, forType: type) }
                 }
                 return copy
             }
+        }
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        pasteChangeCount = pasteboard.changeCount
+        ClipboardSync.noteOwnChange(pasteChangeCount) // typing, not copying: don't mirror it to the client
+
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: down)
+            event?.flags = .maskCommand
+            event?.post(tap: .cghidEventTap)
+        }
+
+        pasteGeneration += 1
+        let generation = pasteGeneration
+        queue.asyncAfter(deadline: .now() + 0.5) {
+            guard generation == self.pasteGeneration else { return } // a newer paste restores later
+            let saved = self.pasteSaved
+            self.pasteSaved = nil
+            guard pasteboard.changeCount == self.pasteChangeCount else { return }
             pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-            let ours = pasteboard.changeCount
-            ClipboardSync.noteOwnChange(ours) // typing, not copying: don't mirror it to the client
-
-            for down in [true, false] {
-                let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: down)
-                event?.flags = .maskCommand
-                event?.post(tap: .cghidEventTap)
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                // Restore the user's clipboard unless something else was copied meanwhile.
-                guard pasteboard.changeCount == ours else { return }
-                pasteboard.clearContents()
-                if !saved.isEmpty { pasteboard.writeObjects(saved) }
-                ClipboardSync.noteOwnChange(pasteboard.changeCount)
-            }
+            if let saved, !saved.isEmpty { pasteboard.writeObjects(saved) }
+            ClipboardSync.noteOwnChange(pasteboard.changeCount)
         }
     }
 

@@ -90,6 +90,13 @@ final class HostConfig {
         return String(format: "turnBytes.%04d-%02d", parts.year ?? 0, parts.month ?? 0)
     }
 
+    /// Start at login and come back after a crash (the LaunchAgent). On unless turned off in
+    /// the menu: an unreachable Mac after a restart is the worst failure a remote host has.
+    var launchAtLogin: Bool {
+        get { defaults.object(forKey: "launchAtLogin") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "launchAtLogin") }
+    }
+
     /// Share copied text between the Mac and the client.
     var shareClipboard: Bool {
         get { defaults.object(forKey: "shareClipboard") as? Bool ?? true }

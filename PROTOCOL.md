@@ -22,6 +22,11 @@ mime types). The host prefers HEVC when `video/H265` is listed, else H.264.
 `device.cursor: true` means the client draws the cursor itself: the host leaves it out of the video
 and streams its position and shape on the input channel instead.
 One session at a time: a newly authenticated client replaces the old one.
+Wrong passwords are counted per source (the client's IP; through the relay, the IP the relay
+saw): 5 within a minute lock that source for a minute, doubling per further lockout up to an
+hour, and a correct login clears it. A browser may open the signaling socket only from the viewer
+page this host serves (its `Origin` must be on the web port); clients without `Origin` (the app)
+are unaffected.
 Closing the WebSocket ends the session.
 
 Signaling only sets a session up. Once WebRTC is connected, either side may lose the WebSocket
@@ -30,7 +35,11 @@ when the viewer closes the input channel, WebRTC fails, or the host says `bye` (
 `device.reconnect` (optional) is the reason an automatic reconnect is happening, for the host's log.
 
 `{"type":"error","message":"...","retry":true}`: the session ended for a reason that a new session
-fixes (a host setting changed); the client reconnects by itself. Without `retry` (wrong password,
+fixes (a host setting changed, or the relay lost the Mac for a moment); the client reconnects by
+itself. A client whose WebRTC link is still connected ignores a retryable `error`: only signaling
+is gone, and an ended session also says `bye` (below) or closes the input channel.
+A relay close with code 4404 ("Mac offline") before the first connection is retried a few times,
+2 s apart: the Mac's own relay link drops for a second or two now and then. Without `retry` (wrong password,
 lockout, another device took over) it stops and shows the message. A client that loses an
 established session without any error (network change, host restart) also reconnects by itself,
 with backoff, for about a minute.
@@ -56,7 +65,7 @@ Client → host. Coordinates `x`,`y` are normalized `0..1` over the video frame.
 | `{"t":"down","b":0,"x":..,"y":..}` | button down. `b`: 0 left, 1 right, 2 middle. Optional `"c":1` forces the click count (otherwise the host counts double/triple clicks) |
 | `{"t":"up","b":0,"x":..,"y":..}` | button up |
 | `{"t":"scroll","dx":0,"dy":-40}` | scroll in points; positive `dy` = content moves down (reveals what is above) |
-| `{"t":"key","code":458756,"down":true}` | physical key; `code` = USB HID usage (`0x0007xxxx`), i.e. Flutter `PhysicalKeyboardKey.usbHidUsage` |
+| `{"t":"key","code":458756,"down":true}` | physical key; `code` = USB HID usage (`0x0007xxxx`), i.e. Flutter `PhysicalKeyboardKey.usbHidUsage`. LANG1 (`0x70090`, 한/영) is not posted: on key down the host switches the Mac's input source between Korean and the last Latin layout |
 | `{"t":"text","s":"안녕"}` | type committed text (soft keyboard / IME / dictation). `"paste":true` (the viewer's compose box) always pastes it, so line breaks stay line breaks instead of pressing Return |
 | `{"t":"ping","ts":123}` | host answers `{"t":"pong","ts":123}` |
 | `{"t":"audio","on":true}` | client is (not) playing the audio channel. While on, the host mutes the Mac's speakers; while off, the Mac plays its own sound |

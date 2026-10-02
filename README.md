@@ -30,7 +30,9 @@ Jump Desktop과는 관계없는 별개의 프로그램입니다.
 cd host && ./build.sh install
 ```
 
-`~/Applications/JumpHost.app`에 설치하고 실행한다. 메뉴바 모니터 아이콘에서 접속 주소·비밀번호·화질을 본다.
+`~/Applications/JumpHost.app`에 설치하고 실행한다. 메뉴바 모니터 아이콘에서 접속 주소·비밀번호(⌥ 누르면 보임)·화질을 본다.
+처음 실행하면 앱 안의 LaunchAgent(`Contents/Library/LaunchAgents`, `SMAppService.agent`)를 등록해
+로그인 시 자동 실행되고, 오류로 죽으면 launchd가 다시 띄운다(메뉴에서 종료한 것은 그대로 둔다). 메뉴 **로그인 시 자동 실행 · 멈추면 다시 켜기**로 끈다.
 아이콘이 노치 뒤에 숨으면 JumpHost를 다시 열면(Spotlight 등) 같은 메뉴가 마우스 위치에 뜬다.
 연결 기록: `~/Library/Logs/JumpHost/host.log` (메뉴 **연결 기록 보기**) — 세션 시작/종료 이유, 재연결 이유, 5초마다 경로·화질.
 다른 사람에게 줄 때는 `host/package.sh` → `dist/JumpHost-<버전>.zip` (앱 + `docs/manual.html`).
@@ -109,6 +111,8 @@ cd relay && npm install && npx wrangler login && npx wrangler deploy
 ```bash
 npx wrangler secret put HOST_IDS
 ```
+Mac ID는 처음 접속한 Mac의 토큰이 차지한다. 맥 설정을 지워 토큰이 바뀌면 중개 서버가 409로 거부하고 메뉴에 이유가 뜬다.
+`HOST_RESET`을 `<Mac ID>:<새 값>`으로 넣으면 다음에 접속하는 Mac이 그 ID를 한 번 다시 차지한다(`setup-relay.command`가 매번 넣는다).
 직접 연결이 막히는 망(회사망 등 UDP 차단)을 위한 TURN — Cloudflare Realtime, 월 1,000GB 무료.
 대시보드 Realtime → TURN Server에서 키를 만든 뒤 `relay/set-turn-secrets.sh`를 실행하면 값을 검증하고 저장한다.
 직접 연결이 되면 TURN은 쓰이지 않는다 (호스트 로그 `path srflx->srflx` = 직접, `relay` = 중계).
@@ -120,7 +124,10 @@ Mac·iPad·폰에 Tailscale을 설치하고 같은 계정으로 로그인한 뒤
 
 ## 보안
 
-- 비밀번호는 로그인 때 전송되지 않고 매 접속마다 새 nonce의 HMAC-SHA256만 오간다. 1분에 5회 실패하면 잠긴다.
+- 비밀번호는 로그인 때 전송되지 않고 매 접속마다 새 nonce의 HMAC-SHA256만 오간다. 1분에 5회 실패하면 그 출처(IP, 중개 서버 경유는 중개 서버가 본 IP)만 1분 잠기고, 반복되면 최대 1시간까지 두 배씩 늘어난다.
+- 브라우저는 이 Mac이 제공하는 뷰어 페이지(Origin이 웹 포트)에서만 신호 소켓을 열 수 있다. 같은 LAN의 다른 웹페이지가 비밀번호를 맞혀 보는 것을 막는다.
+- 웹 뷰어는 개인 기기(아이폰·아이패드·Mac·안드로이드, 홈 화면 앱)에서만 기본으로 비밀번호를 기억한다. 다른 PC에서는 탭을 닫으면 잊는다.
+- 호스트는 비밀번호를 UserDefaults에 둔다. Keychain은 자체 서명 앱이 업데이트될 때마다 Mac 화면에 허용 창을 띄워, 원격 접속이 그 창에 막힐 수 있어서 쓰지 않는다.
 - 원격 비밀번호 변경은 로그인된 세션의 input 데이터 채널(DTLS, 기기↔Mac 종단 간)로만 가며 현재 비밀번호를 다시 요구한다. 틀린 시도도 잠금 횟수에 들어간다.
 - 화면·입력 데이터는 WebRTC(DTLS-SRTP)로 암호화된다. 신호 채널(ws://)은 평문이라 LAN에서는 SDP 변조가 이론상 가능하다 → 외부에서는 Tailscale로 감쌀 것.
 - 클라이언트 앱은 비밀번호를 기기에 평문(SharedPreferences)으로 저장한다.

@@ -47,8 +47,8 @@ final class ClipboardSync {
         }
     }
 
-    /// Puts the client's text on the Mac pasteboard. Synchronous (on the caller's thread), so a
-    /// paste keystroke that follows on the same channel already sees it.
+    /// Puts the client's text on the Mac pasteboard. Synchronous: called on the input queue, so
+    /// a paste keystroke queued behind it already sees it.
     func apply(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

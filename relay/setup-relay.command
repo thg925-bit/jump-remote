@@ -62,8 +62,22 @@ script -q "$log" npx wrangler deploy || fail "올리지 못했습니다. 위 메
 url=$(grep -aoE 'https://jump-relay\.[a-z0-9-]+\.workers\.dev' "$log" | head -1 || true)
 rm -f "$log"
 [ -n "$url" ] || fail "중개 서버 주소를 찾지 못했습니다. 위 메시지를 확인하세요."
-# Only this Mac may use it.
-printf '%s' "$mac_id" | npx wrangler secret put HOST_IDS >/dev/null || fail "이 Mac을 등록하지 못했습니다."
+# Only these Macs may use it. Cloudflare can't show a secret back, so the list is kept on this
+# Mac too (a second Mac on the same account is added here, not lost).
+ids_file="$HOME/Library/Application Support/JumpHost/relay-host-ids"
+mkdir -p "$(dirname "$ids_file")"
+known=$(cat "$ids_file" 2>/dev/null || true)
+echo
+echo "이 Cloudflare 계정의 중개 서버를 다른 Mac도 같이 쓰나요?"
+echo "그렇다면 그 Mac의 ID를 넣으세요 (Jump 메뉴 링크의 #id= 뒤, 여러 대는 쉼표로). 없으면 그냥 Enter."
+[ -n "$known" ] && echo "(지난번 목록: $known)"
+read -r -p "다른 Mac ID: " extra || extra=""
+ids=$(printf '%s,%s,%s' "$mac_id" "$known" "$extra" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '\n' | grep -E '^[a-z0-9]{8,32}$' | awk '!seen[$0]++' | paste -sd, -)
+printf '%s' "$ids" | npx wrangler secret put HOST_IDS >/dev/null || fail "이 Mac을 등록하지 못했습니다."
+printf '%s' "$ids" > "$ids_file"
+# If this Mac's registration on the relay no longer matches (settings wiped, reinstalled), let it
+# claim its ID once more; the relay uses this value up on the Mac's next connection.
+printf '%s:%s' "$mac_id" "$(date +%s)" | npx wrangler secret put HOST_RESET >/dev/null || true
 
 say "4/4 Jump Host 연결"
 defaults write com.jihun.jumphost relayURL "$url"

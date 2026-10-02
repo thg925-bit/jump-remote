@@ -3,6 +3,9 @@ import CoreGraphics
 
 /// USB HID usage (page 0x07, as sent by the client) -> macOS virtual key code.
 enum KeyMap {
+    /// HID LANG1, the 한/영 key: handled by `InputSource`, never posted as a key.
+    static let hangulKey = 0x70090
+
     static func virtualKey(forHIDUsage usage: Int) -> CGKeyCode? {
         // Clients send the full usage (0x0007xxxx); only the keyboard page is mapped.
         guard usage >> 16 == 0x07 else { return nil }

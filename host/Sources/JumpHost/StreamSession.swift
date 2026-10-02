@@ -28,7 +28,7 @@ struct DeviceInfo {
 }
 
 /// One streaming session: WebRTC peer connection + screen capture + input channel.
-/// All mutable state lives on `queue`, except the injector, which the input data channel drives.
+/// All mutable state lives on `queue`, except the injector, which runs on its own input queue.
 final class StreamSession: NSObject {
     enum Event {
         case connected
@@ -312,7 +312,7 @@ final class StreamSession: NSObject {
     private func captureStarted(_ started: ScreenCapturer.Started, first: Bool) {
         guard !stopped else { return }
         displayID = started.displayID
-        injector.displayID = started.displayID
+        injector.setDisplay(started.displayID)
         displayMessage = [
             "t": "display",
             "id": Int(started.displayID),
@@ -566,9 +566,10 @@ extension StreamSession: RTCDataChannelDelegate {
                 self.onEvent?(.clientAudio(on: on))
             }
         case "clip":
-            // Applied right here, before any paste keystroke queued behind it on this channel.
+            // In line with the input, so a ⌘V queued behind it already sees it.
             if HostConfig.shared.shareClipboard, let text = message["text"] as? String, !text.isEmpty {
-                clipboard.apply(text)
+                let clipboard = self.clipboard
+                injector.enqueue { clipboard.apply(text) }
             }
         case "selectDisplay":
             guard let id = (message["id"] as? NSNumber)?.uint32Value else { return }
@@ -581,7 +582,6 @@ extension StreamSession: RTCDataChannelDelegate {
                 self.onEvent?(.passwordChange(current: current, new: new))
             }
         default:
-            SystemAwake.noteUserActivity()
             injector.handle(message)
         }
     }

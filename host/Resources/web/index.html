@@ -37,6 +37,8 @@
   #connect button { font: inherit; font-weight: 600; color: #fff; background: var(--accent); border: 0;
     border-radius: 8px; padding: 11px; cursor: pointer; }
   #connect button:disabled { opacity: .6; }
+  #connect label.check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  #connect label.check input { width: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--accent); }
   #status { min-height: 1.4em; color: var(--muted); font-size: 13px; }
   #status.error { color: var(--danger); }
 
@@ -180,6 +182,7 @@
     <h1>Jump Viewer</h1>
     <label><span id="hostLabel">Mac 주소</span> <input id="host" name="host" inputmode="url" autocapitalize="off" spellcheck="false" required></label>
     <label>비밀번호 <span class="pw"><input id="password" name="password" type="password" autocapitalize="off" spellcheck="false" required><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span></label>
+    <label class="check"><input id="remember" type="checkbox"> 이 기기에 비밀번호 기억</label>
     <button id="go" type="submit">연결</button>
     <div id="status"></div>
   </form>
@@ -346,6 +349,7 @@ const HID = (() => {
 const $ = (id) => document.getElementById(id);
 const ui = {
   connect: $("connect"), form: $("form"), host: $("host"), password: $("password"), go: $("go"), status: $("status"),
+  remember: $("remember"),
   viewer: $("viewer"), video: $("screen"), surface: $("surface"), toolbar: $("toolbar"), stats: $("stats"),
   kbd: $("kbd"), compose: $("compose"), banner: $("banner"), kbar: $("kbar"), kbarPreview: $("kbarPreview"),
   composeInput: $("composeInput"), composeSend: $("composeSend"), composeEnter: $("composeEnter"), composeUndo: $("composeUndo"),
@@ -360,6 +364,13 @@ const ui = {
 const store = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
   set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+  remove(key) { try { localStorage.removeItem(key); } catch {} },
+};
+// This tab only: the password when it isn't remembered (reconnects and updates still need it).
+const tabStore = {
+  get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { sessionStorage.setItem(key, value); } catch {} },
+  remove(key) { try { sessionStorage.removeItem(key); } catch {} },
 };
 
 // Served by the Mac itself (LAN / Tailscale) the viewer talks to it directly; served by the
@@ -378,7 +389,26 @@ fetch("relay.json", { cache: "no-store" })
     ui.host.value = store.get("jump.relayId") || "";
   })
   .catch(() => {});
-ui.password.value = store.get("jump.password") || "";
+// "이 기기에 비밀번호 기억": on by default on phones, tablets, Macs and home-screen apps; off on
+// other computers (a company PC), where anyone using the browser later would get straight in.
+const personalDevice = /iPhone|iPad|Macintosh|Android/.test(navigator.userAgent) || navigator.standalone === true
+  || matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches;
+ui.remember.checked = store.get("jump.remember") ? store.get("jump.remember") === "1" : personalDevice;
+ui.password.value = store.get("jump.password") || tabStore.get("jump.password") || "";
+function savePassword(password) {
+  if (ui.remember.checked) {
+    store.set("jump.password", password);
+    tabStore.remove("jump.password");
+  } else {
+    store.remove("jump.password");
+    tabStore.set("jump.password", password);
+  }
+}
+if (!ui.remember.checked && store.get("jump.password")) savePassword(store.get("jump.password")); // saved by an older version
+ui.remember.addEventListener("change", () => {
+  store.set("jump.remember", ui.remember.checked ? "1" : "0");
+  if (!ui.remember.checked) savePassword(ui.password.value); // forget it here at once
+});
 
 function setStatus(text, isError = false) {
   ui.status.textContent = text;
@@ -567,6 +597,7 @@ if (window.visualViewport) {
 
 // ---------- Session ----------
 let session = null;
+let shortPasswordWarned = false;
 
 class Session {
   constructor(host, password) {
@@ -604,9 +635,23 @@ class Session {
     this.ws.onerror = () => signalingLost(relayMode
       ? "중개 서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요."
       : "Mac에 연결할 수 없습니다. 주소와 호스트 실행 여부를 확인하세요.");
-    this.ws.onclose = (event) => signalingLost(this.lastError || (event.code === 4404
+    this.ws.onclose = (event) => {
+      // "Mac offline" right at the start: the Mac's own link to the relay drops for a couple of
+      // seconds now and then. Look again a few times before giving up.
+      const tries = this.offlineTries || 0;
+      if (event.code === 4404 && !this.connected && !this.resuming && !this.closed && this === session && tries < 3) {
+        this.close();
+        const next = new Session(this.host, this.password);
+        next.offlineTries = tries + 1;
+        session = next;
+        setStatus(`Mac을 찾는 중… (${next.offlineTries}/3)`);
+        setTimeout(() => { if (session === next) next.start(); }, 2000);
+        return;
+      }
+      signalingLost(this.lastError || (event.code === 4404
       ? "Mac이 꺼져 있거나 인터넷에 연결돼 있지 않습니다. Mac ID도 확인하세요."
       : "연결이 종료되었습니다."));
+    };
   }
 
   send(message) {
@@ -646,6 +691,9 @@ class Session {
         }
         break;
       case "error":
+        // Retryable while the picture still flows peer to peer (the relay lost the Mac for a
+        // moment): only signaling is gone, which a running session doesn't need.
+        if (message.retry && this.connected && this.pc && this.pc.connectionState === "connected") break;
         // The close frame can lag behind (especially through the relay); end now.
         this.lastError = message.message;
         if (!message.retry) this.final = true;
@@ -696,6 +744,10 @@ class Session {
         this.attempt = 0;
         showBanner("");
         enterViewer();
+        if (this.password.length < 8 && !shortPasswordWarned) {
+          shortPasswordWarned = true;
+          toast("비밀번호가 짧습니다. ⚙ 설정에서 8자 이상으로 바꾸세요", 6000);
+        }
       }
       if (pc.connectionState === "failed") this.fail("연결이 끊어졌습니다.");
       // A network switch leaves the link "disconnected" for a long while before it "fails"; start
@@ -872,7 +924,7 @@ ui.form.addEventListener("submit", (event) => {
   const host = ui.host.value.trim();
   const password = ui.password.value;
   store.set(relayMode ? "jump.relayId" : "jump.host", relayMode ? host.toLowerCase() : host);
-  store.set("jump.password", password);
+  savePassword(password);
   if (session) session.close();
   cancelReconnect();
   setStatus("연결 중…");
@@ -1802,10 +1854,13 @@ function syncModifiers(e) {
   }
 }
 const isModifierCode = (code) => code >= 0x700e0 && code <= 0x700e7;
+// 한/영: "Lang1", or on many Korean PC keyboards the right Alt that Windows turns into it.
+// The Mac switches its input source on this code (macOS itself ignores the key).
+const keyCode = (e) => (e.key === "HangulMode" ? HID("Lang1") : HID(macCode(e.code)));
 
 window.addEventListener("keydown", (e) => {
   if (!ui.viewer.classList.contains("active") || ownsKeys(e.target)) return;
-  const code = HID(macCode(e.code));
+  const code = keyCode(e);
   const inSoftKeyboard = document.activeElement === ui.kbd;
   if (inSoftKeyboard && (e.isComposing || e.keyCode === 229 || !code)) return; // IME owns it
   if (!code) return;
@@ -1820,7 +1875,7 @@ window.addEventListener("keydown", (e) => {
 
 window.addEventListener("keyup", (e) => {
   if (!ui.viewer.classList.contains("active") || ownsKeys(e.target)) return;
-  const code = HID(macCode(e.code));
+  const code = keyCode(e);
   if (!code) return;
   if (document.activeElement === ui.kbd && (e.isComposing || e.keyCode === 229)) return;
   e.preventDefault();
@@ -1925,11 +1980,11 @@ ui.optClip.addEventListener("change", () => store.set("jump.clip", ui.optClip.ch
 
 // ---------- Toast ----------
 let toastTimer = null;
-function toast(text) {
+function toast(text, ms = 1600) {
   ui.toast.textContent = text;
   ui.toast.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => ui.toast.classList.remove("show"), 1600);
+  toastTimer = setTimeout(() => ui.toast.classList.remove("show"), ms);
 }
 
 // ---------- Clipboard ----------
@@ -2056,7 +2111,7 @@ ui.sheetForm.addEventListener("submit", async (e) => {
   ui.pwSave.disabled = false;
   if (!result.ok) return setPwStatus(result.error || "변경하지 못했습니다", "error");
   session.password = next;
-  store.set("jump.password", next);
+  savePassword(next);
   ui.password.value = next;
   for (const field of pwFields) field.value = "";
   setPwStatus("변경했습니다. 다음 접속부터 새 비밀번호로 들어옵니다.", "ok");

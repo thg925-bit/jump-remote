@@ -23,15 +23,27 @@ final class HostController {
     private var relay: RelayClient?
     /// Called on `queue` when the relay link changes.
     var onRelayStateChange: ((RelayClient.State) -> Void)?
+    /// Called on `queue`: whether the relay's viewer page is older than this Mac's.
+    var onRelayViewerStale: ((Bool) -> Void)?
     private var session: StreamSession?
     /// Connections still authenticating; the session retains its connection after that.
     private var pendingConnections: [ObjectIdentifier: SignalingChannel] = [:]
-    private var failedAttempts: [Date] = []
+    /// Wrong passwords per source (IP address), so a stranger guessing locks out only
+    /// themselves: 5 misses within a minute lock that source for a minute, doubling with every
+    /// further lockout up to an hour. A correct login forgives.
+    private struct Strikes {
+        var misses: [Date] = []
+        var lockedUntil: Date?
+        var lockouts = 0
+        var last = Date()
+    }
+    private var strikes: [String: Strikes] = [:]
     /// Whether the connected client is playing our audio (it tells us when that changes).
     private var clientAudioOn = true
 
     private static let maxFailures = 5
-    private static let lockoutWindow: TimeInterval = 60
+    private static let failureWindow: TimeInterval = 60
+    private static let maxLockout: TimeInterval = 3600
 
     func start() throws {
         server.onConnection = { [weak self] connection in self?.accept(connection) }
@@ -54,6 +66,7 @@ final class HostController {
             let relay = RelayClient(base: base, macID: config.macID, token: config.relayToken, queue: self.queue)
             relay.onViewer = { [weak self] channel in self?.accept(channel) }
             relay.onStateChange = { [weak self] state in self?.onRelayStateChange?(state) }
+            relay.onViewerStale = { [weak self] stale in self?.onRelayViewerStale?(stale) }
             relay.start()
             self.relay = relay
         }
@@ -95,12 +108,18 @@ final class HostController {
                 connection.fail("인증이 필요합니다")
                 return
             }
-            guard self.verify(message, nonce: nonce) else {
-                self.failedAttempts.append(Date())
-                hostLog("[host] auth failed from \(connection.remoteDescription)")
-                connection.fail(self.isLockedOut() ? "시도 횟수 초과. 1분 뒤 다시 시도하세요" : "비밀번호가 틀렸습니다")
+            let source = connection.source
+            if let locked = self.lockoutMessage(source) {
+                connection.fail(locked)
                 return
             }
+            guard self.verify(message, nonce: nonce) else {
+                hostLog("[host] auth failed from \(connection.remoteDescription)")
+                self.recordFailure(source)
+                connection.fail(self.lockoutMessage(source) ?? "비밀번호가 틀렸습니다")
+                return
+            }
+            self.strikes[source] = nil
             authenticated = true
             self.startSession(on: connection, device: DeviceInfo(message["device"]))
             self.pendingConnections[id] = nil
@@ -129,8 +148,7 @@ final class HostController {
     }
 
     private func verify(_ message: [String: Any], nonce: Data) -> Bool {
-        guard !isLockedOut(),
-              let encoded = message["hmac"] as? String,
+        guard let encoded = message["hmac"] as? String,
               let mac = Data(base64Encoded: encoded)
         else { return false }
         let key = SymmetricKey(data: Data(HostConfig.shared.password.utf8))
@@ -139,12 +157,12 @@ final class HostController {
 
     /// A connected client may change the password, but must still know the current one; wrong
     /// guesses count toward the same lockout as failed logins.
-    private func changePassword(current: String, new: String) -> [String: Any] {
-        guard !isLockedOut() else { return ["ok": false, "error": "시도 횟수 초과. 1분 뒤 다시 시도하세요"] }
+    private func changePassword(current: String, new: String, source: String) -> [String: Any] {
+        if let locked = lockoutMessage(source) { return ["ok": false, "error": locked] }
         guard Self.sameSecret(current, HostConfig.shared.password) else {
-            failedAttempts.append(Date())
             hostLog("[host] password change rejected: wrong current password")
-            return ["ok": false, "error": "현재 비밀번호가 틀렸습니다"]
+            recordFailure(source)
+            return ["ok": false, "error": lockoutMessage(source) ?? "현재 비밀번호가 틀렸습니다"]
         }
         guard new.count >= 8, new.count <= 128 else { return ["ok": false, "error": "새 비밀번호는 8자 이상이어야 합니다"] }
         guard new == new.trimmingCharacters(in: .whitespacesAndNewlines) else {
@@ -160,10 +178,27 @@ final class HostController {
         return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    private func isLockedOut() -> Bool {
-        let cutoff = Date().addingTimeInterval(-Self.lockoutWindow)
-        failedAttempts.removeAll { $0 < cutoff }
-        return failedAttempts.count >= Self.maxFailures
+    /// The message for a locked-out source, nil when it may try.
+    private func lockoutMessage(_ source: String) -> String? {
+        guard let until = strikes[source]?.lockedUntil, until > Date() else { return nil }
+        let minutes = max(1, Int((until.timeIntervalSinceNow / 60).rounded(.up)))
+        return "시도 횟수 초과. \(minutes)분 뒤 다시 시도하세요"
+    }
+
+    private func recordFailure(_ source: String) {
+        let now = Date()
+        strikes = strikes.filter { now.timeIntervalSince($0.value.last) < 6 * 3600 } // forget old ones
+        var entry = strikes[source] ?? Strikes()
+        entry.last = now
+        entry.misses = entry.misses.filter { now.timeIntervalSince($0) < Self.failureWindow } + [now]
+        if entry.misses.count >= Self.maxFailures {
+            let length = min(Self.failureWindow * pow(2, Double(entry.lockouts)), Self.maxLockout)
+            entry.lockedUntil = now.addingTimeInterval(length)
+            entry.lockouts += 1
+            entry.misses = []
+            hostLog("[host] \(source) locked out for \(Int(length)) s after \(Self.maxFailures) wrong passwords")
+        }
+        strikes[source] = entry
     }
 
     private func startSession(on connection: SignalingChannel, device: DeviceInfo) {
@@ -186,7 +221,7 @@ final class HostController {
                 self.clientAudioOn = on
                 self.applySpeakerPolicy()
             case .passwordChange(let current, let new):
-                var reply = self.changePassword(current: current, new: new)
+                var reply = self.changePassword(current: current, new: new, source: session.signaling.source)
                 reply["t"] = "password"
                 if reply["ok"] as? Bool == true { hostLog("[host] password changed from \(session.device.name)") }
                 session.reply(reply)

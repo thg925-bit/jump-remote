@@ -9,11 +9,17 @@ final class RelayClient: NSObject {
         case offline
         case connecting
         case online
+        /// The relay turned this Mac away (why, for the menu); it keeps trying slowly, so a fix
+        /// on the relay's side applies by itself.
+        case rejected(String)
     }
 
     var onViewer: ((RelayChannel) -> Void)?
     /// Called on `queue`.
     var onStateChange: ((State) -> Void)?
+    /// Called on `queue`: true when the relay serves an older (or newer) viewer page than this
+    /// Mac's, i.e. the relay needs deploying again.
+    var onViewerStale: ((Bool) -> Void)?
 
     private(set) var state: State = .offline {
         didSet { if state != oldValue { onStateChange?(state) } }
@@ -22,7 +28,10 @@ final class RelayClient: NSObject {
     private(set) var iceServers: [[String: Any]] = [["urls": "stun:stun.cloudflare.com:3478"]]
 
     private let url: URL
+    private let base: URL
     private let queue: DispatchQueue
+    private var viewerCheckedAt: Date?
+    private var viewerStale = false
     private lazy var urlSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
     private var task: URLSessionWebSocketTask?
     private var channels: [String: RelayChannel] = [:]
@@ -37,6 +46,7 @@ final class RelayClient: NSObject {
         components.path = "/host"
         components.queryItems = [URLQueryItem(name: "id", value: macID), URLQueryItem(name: "token", value: token)]
         self.url = components.url!
+        self.base = base
         self.queue = queue
         super.init()
     }
@@ -69,7 +79,7 @@ final class RelayClient: NSObject {
 
     private func connect() {
         guard !stopped, task == nil else { return }
-        state = .connecting
+        if case .rejected = state {} else { state = .connecting }
         let task = urlSession.webSocketTask(with: url)
         task.maximumMessageSize = 1 << 20
         self.task = task
@@ -101,8 +111,17 @@ final class RelayClient: NSObject {
                 case .success:
                     self.receive(on: task)
                 case .failure(let error):
-                    hostLog("[relay] link lost: \(error.localizedDescription)")
-                    self.lost(task)
+                    let status = (task.response as? HTTPURLResponse)?.statusCode
+                    let close = task.closeCode.rawValue
+                    let reason = task.closeReason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                    hostLog("[relay] link lost: \(error.localizedDescription)"
+                            + (status.map { $0 == 101 ? "" : " (HTTP \($0))" } ?? "")
+                            + (close != 0 ? " (close \(close) \(reason))" : ""))
+                    if let status, [400, 403, 409].contains(status) {
+                        self.rejected(task, status: status)
+                    } else {
+                        self.lost(task)
+                    }
                 }
             }
         }
@@ -117,6 +136,7 @@ final class RelayClient: NSObject {
             state = .online
             retryDelay = 1
             hostLog("[relay] online")
+            checkViewer()
         }
 
         switch message["relay"] as? String {
@@ -125,7 +145,7 @@ final class RelayClient: NSObject {
             // Fresh TURN credentials per viewer (they expire after a day); the reply lands
             // well before the viewer finishes authenticating and the session starts.
             send(["relay": "turn"])
-            let channel = RelayChannel(cid: cid, client: self)
+            let channel = RelayChannel(cid: cid, ip: message["ip"] as? String, client: self)
             channels[cid] = channel
             onViewer?(channel)
         case "close":
@@ -149,6 +169,41 @@ final class RelayClient: NSObject {
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.connect() }
     }
 
+    /// Refused at the handshake: say why, and try again only now and then.
+    private func rejected(_ task: URLSessionWebSocketTask, status: Int) {
+        guard self.task === task else { return }
+        disconnect()
+        let why = switch status {
+        case 409: "이 Mac의 등록 정보가 중개 서버와 다릅니다"
+        case 403: "중개 서버가 이 Mac을 받지 않습니다"
+        default: "중개 서버 주소나 Mac ID가 맞지 않습니다"
+        }
+        state = .rejected(why)
+        guard !stopped else { return }
+        queue.asyncAfter(deadline: .now() + 60) { [weak self] in self?.connect() }
+    }
+
+    /// Compares the relay's viewer page with this Mac's: every few hours, or on every reconnect
+    /// while they differ (a redeploy restarts the relay, so the link comes back right after it).
+    private func checkViewer() {
+        if !viewerStale, let last = viewerCheckedAt, Date().timeIntervalSince(last) < 6 * 3600 { return }
+        viewerCheckedAt = Date()
+        guard let local = Bundle.main.resourceURL.flatMap({ try? Data(contentsOf: $0.appendingPathComponent("web/index.html")) })
+        else { return }
+        var request = URLRequest(url: base)
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        urlSession.dataTask(with: request) { [weak self] data, response, _ in
+            guard let self, let data, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+            let stale = data != local
+            self.queue.async {
+                if stale && !self.viewerStale { hostLog("[relay] its viewer page differs from this Mac's: deploy the relay again") }
+                if !stale && self.viewerStale { hostLog("[relay] its viewer page is up to date again") }
+                self.viewerStale = stale
+                self.onViewerStale?(stale)
+            }
+        }.resume()
+    }
+
     private func disconnect() {
         keepalive?.cancel()
         keepalive = nil
@@ -167,16 +222,19 @@ final class RelayChannel: SignalingChannel {
     var onClose: (() -> Void)?
 
     let remoteDescription: String
+    let source: String
     var iceServers: [[String: Any]] { client?.iceServers ?? [] }
 
     private let cid: String
     private weak var client: RelayClient?
     private var closed = false
 
-    init(cid: String, client: RelayClient) {
+    /// `ip`: the viewer's address as the relay saw it (older relays don't send it).
+    init(cid: String, ip: String?, client: RelayClient) {
         self.cid = cid
         self.client = client
-        self.remoteDescription = "relay:\(cid)"
+        self.remoteDescription = "relay:\(cid)" + (ip.map { " (\($0))" } ?? "")
+        self.source = ip ?? "relay"
     }
 
     func send(_ message: [String: Any]) {

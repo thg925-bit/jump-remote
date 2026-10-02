@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var state: HostController.State = .idle
     private var serverError: String?
     private var relayState: RelayClient.State = .offline
+    private var relayViewerStale = false
     private var terminationSignal: DispatchSourceSignal?
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if LoginAgent.handOverIfNeeded() { exit(0) }
         // Undo a mute left behind by a crash, unless another instance (e.g. a test host on other
         // ports) is running and may own that mute.
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
@@ -37,14 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         termination.resume()
         terminationSignal = termination
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
-        updateIcon()
 
         host.onRelayStateChange = { [weak self] state in
             DispatchQueue.main.async { self?.relayState = state }
+        }
+        host.onRelayViewerStale = { [weak self] stale in
+            DispatchQueue.main.async { self?.relayViewerStale = stale }
         }
         host.onStateChange = { [weak self] state in
             DispatchQueue.main.async {
@@ -55,11 +55,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do {
             try host.start()
         } catch {
+            // Already running (e.g. opened by hand while the login agent had started it): leave
+            // that copy alone. A clean exit, so the agent doesn't start this one over and over.
+            if (error as NSError).code == Int(EADDRINUSE), !others.isEmpty {
+                hostLog("[app] another Jump Host is already running; quitting this copy")
+                others.first?.activate()
+                exit(0)
+            }
             serverError = error.localizedDescription
             hostLog("[app] server failed: \(error)")
         }
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+        updateIcon()
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        hostLog("[app] Jump Host \(version) started\(LoginAgent.isCurrentProcess ? " by the login agent" : "")"
+                + " — screen recording \(Permissions.screenRecording ? "ok" : "MISSING"),"
+                + " accessibility \(Permissions.accessibility ? "ok" : "MISSING")")
         _ = HostConfig.shared.password  // create one on first launch so the menu and clients agree
         Permissions.requestMissing()
+        LoginAgent.apply()
+        // Just registered: from now on launchd runs it.
+        if LoginAgent.handOverIfNeeded() { exit(0) }
     }
 
     // MARK: NSMenuDelegate
@@ -90,9 +110,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .online: "연결됨"
             case .connecting: "연결 중…"
             case .offline: "오프라인"
+            case .rejected: "거부됨"
             }
             menu.addItem(label("어디서나 접속 (중개 서버 \(status))"))
             menu.addItem(action("   \(link)  — 클릭해서 복사", #selector(copyText(_:)), represented: link))
+            if case .rejected(let why) = relayState {
+                menu.addItem(label("   ⚠︎ \(why) — '중개 서버 만들기'를 다시 실행하세요"))
+            }
+            if relayViewerStale {
+                menu.addItem(label("   ⚠︎ 중개 서버의 화면이 이 Mac과 다른 버전 — '중개 서버 만들기'를 다시 실행하세요"))
+            }
         } else {
             menu.addItem(label("어디서나 접속: 꺼짐 — 밖에서는 Tailscale 주소로 접속"))
         }
@@ -101,8 +128,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(label(String(format: "이번 달 TURN 우회: %.1f GB / 무료 1,000 GB", turnGB)))
 
         menu.addItem(.separator())
+        // Hidden unless ⌥ is held: the menu is often open on a shared or recorded screen.
         let password = HostConfig.shared.password
-        menu.addItem(action("비밀번호: \(password)  — 클릭해서 복사", #selector(copyText(_:)), represented: password))
+        menu.addItem(action("비밀번호: ••••••••  — 클릭해서 복사 (⌥ 누르면 보기)", #selector(copyText(_:)), represented: password))
+        let shown = action("비밀번호: \(password)  — 클릭해서 복사", #selector(copyText(_:)), represented: password)
+        shown.keyEquivalentModifierMask = .option
+        shown.isAlternate = true
+        menu.addItem(shown)
+        if password.count < 8 {
+            menu.addItem(label("   ⚠︎ 비밀번호가 \(password.count)자로 짧습니다. 인터넷에 열려 있으니 8자 이상으로 바꾸세요"))
+        }
         menu.addItem(action("비밀번호 새로 만들기", #selector(regeneratePassword)))
         menu.addItem(action("비밀번호 직접 설정…", #selector(choosePassword)))
 
@@ -137,9 +172,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             #selector(openAccessibility)))
 
         menu.addItem(.separator())
-        let loginItem = action("로그인 시 자동 실행", #selector(toggleLoginItem))
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        let loginItem = action("로그인 시 자동 실행 · 멈추면 다시 켜기", #selector(toggleLoginItem))
+        loginItem.state = LoginAgent.isEnabled ? .on : .off
         menu.addItem(loginItem)
+        if HostConfig.shared.launchAtLogin, LoginAgent.needsApproval {
+            menu.addItem(action("   ⚠︎ 시스템 설정에서 허용이 필요합니다 — 클릭", #selector(openLoginItems)))
+        }
         menu.addItem(action("연결 기록 보기", #selector(openLog)))
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         menu.addItem(label("버전 \(version)"))
@@ -218,24 +256,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         HostConfig.shared.shareClipboard.toggle()
     }
 
-    /// Start with the Mac, so a restart or power cut doesn't leave it unreachable.
+    /// Start with the Mac and come back after a crash, so a restart or power cut doesn't leave
+    /// it unreachable.
     @objc private func toggleLoginItem() {
-        let service = SMAppService.mainApp
-        do {
-            if service.status == .enabled {
-                try service.unregister()
-            } else {
-                try service.register()
-                if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
-            }
-        } catch {
-            hostLog("[app] login item: \(error)")
+        let on = !HostConfig.shared.launchAtLogin
+        HostConfig.shared.launchAtLogin = on
+        if let error = LoginAgent.apply() {
             let alert = NSAlert()
             alert.messageText = "자동 실행 설정을 바꾸지 못했습니다"
             alert.informativeText = "시스템 설정 → 일반 → 로그인 항목에서 JumpHost를 직접 추가하세요.\n(\(error.localizedDescription))"
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }
+    }
+
+    @objc private func openLoginItems() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 
     @objc private func selectQuality(_ sender: NSMenuItem) {

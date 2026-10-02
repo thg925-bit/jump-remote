@@ -13,6 +13,7 @@ final class CursorTracker {
     private var displayID: CGDirectDisplayID = CGMainDisplayID()
     private var lastPosition: CGPoint?
     private var lastImageHash: Int?
+    private var lastQuickHash: Int?
     private var ticks = 0
 
     func start(displayID: CGDirectDisplayID) {
@@ -58,6 +59,21 @@ final class CursorTracker {
         guard let cursor = NSCursor.currentSystem else { return }
         let image = cursor.image
         let size = image.size
+        // Cheap test first (the cursor's own bitmap bytes): rendering and PNG-encoding on the
+        // main thread ten times a second is only worth it when the shape actually changed.
+        var quick = Hasher()
+        quick.combine(size.width)
+        quick.combine(size.height)
+        quick.combine(cursor.hotSpot.x)
+        quick.combine(cursor.hotSpot.y)
+        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+           let bytes = cg.dataProvider?.data as Data? {
+            quick.combine(cg.width)
+            quick.combine(bytes)
+            let key = quick.finalize()
+            if key == lastQuickHash { return }
+            lastQuickHash = key
+        }
         guard size.width > 0, size.height > 0,
               let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2),
                                             pixelsHigh: Int(size.height * 2), bitsPerSample: 8,

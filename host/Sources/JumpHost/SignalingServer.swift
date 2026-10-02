@@ -6,6 +6,9 @@ protocol SignalingChannel: AnyObject {
     var onMessage: (([String: Any]) -> Void)? { get set }
     var onClose: (() -> Void)? { get set }
     var remoteDescription: String { get }
+    /// Who is connecting, for counting wrong passwords: the viewer's IP address (through the
+    /// relay, as the relay saw it).
+    var source: String { get }
     /// STUN/TURN servers the session should use (empty when peers can reach each other).
     var iceServers: [[String: Any]] { get }
     func send(_ message: [String: Any])
@@ -57,6 +60,7 @@ final class SignalingConnection: SignalingChannel {
     var onClose: (() -> Void)?
 
     let remoteDescription: String
+    let source: String
     let iceServers: [[String: Any]] = [] // LAN and Tailscale addresses are host candidates
 
     private let tcp: TCPConnection
@@ -74,6 +78,7 @@ final class SignalingConnection: SignalingChannel {
     init(tcp: TCPConnection) {
         self.tcp = tcp
         self.remoteDescription = tcp.remote
+        self.source = tcp.remote.lastIndex(of: ":").map { String(tcp.remote[..<$0]) } ?? tcp.remote
     }
 
     deinit {
@@ -152,10 +157,15 @@ final class SignalingConnection: SignalingChannel {
                 .map { String($0.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces) }
         }
         guard header("Upgrade")?.lowercased() == "websocket", let key = header("Sec-WebSocket-Key") else {
-            tcp.send(Data("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8))
-            closed = true
-            tcp.closeAfterSending()
-            finish()
+            refuse("400 Bad Request")
+            return false
+        }
+        // Browsers say which page opened the socket. Only the viewer this Mac serves may: any
+        // other web page open on a device in the same network could otherwise try passwords.
+        // The app (no Origin) and the relay (not this socket) are unaffected.
+        if let origin = header("Origin"), !Self.isOwnViewer(origin) {
+            hostLog("[signaling] refused a socket opened by the page \(origin) from \(remoteDescription)")
+            refuse("403 Forbidden")
             return false
         }
         let accept = Data(Insecure.SHA1.hash(data: Data((key + Self.handshakeGUID).utf8))).base64EncodedString()
@@ -171,6 +181,19 @@ final class SignalingConnection: SignalingChannel {
         outbox.forEach(tcp.send)
         outbox.removeAll()
         return true
+    }
+
+    private func refuse(_ status: String) {
+        tcp.send(Data("HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8))
+        closed = true
+        tcp.closeAfterSending()
+        finish()
+    }
+
+    /// The browser viewer served on the web port (by any of this Mac's addresses or names).
+    static func isOwnViewer(_ origin: String) -> Bool {
+        guard let url = URL(string: origin), url.scheme == "http", let port = url.port else { return false }
+        return port == Int(HostConfig.shared.webPort)
     }
 
     private func parseFrames() {

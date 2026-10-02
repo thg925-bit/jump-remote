@@ -8,8 +8,9 @@
 // and Mac, so this relay never learns the password.
 //
 // Host  -> relay: {"cid","msg"} to a viewer, {"relay":"close","cid"}, {"relay":"turn"}
-// Relay -> host : {"relay":"open","cid"}, {"cid","msg"} from a viewer, {"relay":"close","cid"},
+// Relay -> host : {"relay":"open","cid","ip"}, {"cid","msg"} from a viewer, {"relay":"close","cid"},
 //                 {"relay":"turn","iceServers"}
+// "ip" is the viewer's address, so the Mac counts wrong passwords per viewer, not for everyone.
 // Viewer <-> relay: the plain signaling protocol (PROTOCOL.md), untouched.
 
 import { DurableObject } from "cloudflare:workers";
@@ -57,8 +58,9 @@ export class Room extends DurableObject {
     const [client, server] = Object.values(new WebSocketPair());
 
     if (url.pathname === "/host") {
-      if (!(await this.ownsRoom(url.searchParams.get("token") || ""))) {
-        return new Response("Wrong host token", { status: 403 });
+      if (!(await this.ownsRoom(url.searchParams.get("token") || "", url.searchParams.get("id") || ""))) {
+        // 409, not 403: the Mac tells "registered with another token" from "not allowed here".
+        return new Response("Wrong host token: run the relay setup again to reset", { status: 409 });
       }
       for (const old of this.ctx.getWebSockets("host")) old.close(4000, "Replaced by a newer host");
       this.ctx.acceptWebSocket(server, ["host"]);
@@ -74,7 +76,8 @@ export class Room extends DurableObject {
     const cid = crypto.randomUUID().slice(0, 8);
     this.ctx.acceptWebSocket(server, ["viewer", `c:${cid}`]);
     server.serializeAttachment({ cid });
-    host.send(JSON.stringify({ relay: "open", cid }));
+    const ip = request.headers.get("CF-Connecting-IP");
+    host.send(JSON.stringify({ relay: "open", cid, ...(ip ? { ip } : {}) }));
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -136,8 +139,10 @@ export class Room extends DurableObject {
       const other = this.host();
       if (other && other !== ws) return; // a newer host already took over
       for (const viewer of this.ctx.getWebSockets("viewer")) {
-        // Say it in-band too: a close frame alone can be slow to reach the viewer.
-        viewer.send(JSON.stringify({ type: "error", message: "Mac 연결이 끊어졌습니다" }));
+        // Say it in-band too: a close frame alone can be slow to reach the viewer. "retry": the
+        // Mac's link to the relay usually comes back within seconds, and a viewer whose picture
+        // is still flowing (peer to peer) has no need of the relay at all.
+        viewer.send(JSON.stringify({ type: "error", message: "Mac 연결이 끊어졌습니다", retry: true }));
         viewer.close(4404, "Mac went offline");
       }
       return;
@@ -146,17 +151,24 @@ export class Room extends DurableObject {
     if (cid) this.host()?.send(JSON.stringify({ relay: "close", cid }));
   }
 
-  /** The first host to connect with a token claims this Mac ID; later ones must match it. */
-  async ownsRoom(token) {
+  /**
+   * The first host to connect with a token claims this Mac ID; later ones must match it.
+   * A Mac that lost its token (settings wiped, reinstalled) gets back in once the account owner
+   * sets the secret HOST_RESET to "<mac id>:<anything new>" (the setup script does): the next
+   * host to connect claims the ID again. Every successful host connection uses up the current
+   * HOST_RESET value, so it never stays open.
+   */
+  async ownsRoom(token, id) {
     if (token.length < 32) return false;
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
     const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const reset = (this.env.HOST_RESET || "").trim();
+    const resetUsed = await this.ctx.storage.get("resetUsed");
+    const resetOpen = reset !== "" && reset.split(":")[0] === id && reset !== resetUsed;
     const owner = await this.ctx.storage.get("tokenHash");
-    if (!owner) {
-      await this.ctx.storage.put("tokenHash", hash);
-      return true;
-    }
-    return owner === hash;
+    if (owner && owner !== hash && !resetOpen) return false;
+    await this.ctx.storage.put(reset ? { tokenHash: hash, resetUsed: reset } : { tokenHash: hash });
+    return true;
   }
 
   /** STUN always; Cloudflare TURN too when the Worker has TURN_KEY_ID / TURN_KEY_API_TOKEN. */

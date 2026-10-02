@@ -102,6 +102,7 @@ class Session extends ChangeNotifier {
   Timer? _lossTimer;
   String? _resumeReason; // why the current attempt is a reconnect (sent to the host's log)
   bool _signalingOpen = false;
+  int _offlineTries = 0; // "Mac offline" before ever connecting: looked again this many times
 
   // Stats deltas.
   double? _prevBytes;
@@ -175,6 +176,17 @@ class Session extends ChangeNotifier {
         if (generation != _generation) return;
         _signalingOpen = false;
         if (_signalingNoLongerNeeded) return;
+        // "Mac offline" right at the start: the Mac's own link to the relay drops for a couple
+        // of seconds now and then. Look again a few times before giving up.
+        if (ws.closeCode == 4404 && !_everConnected && reconnectAttempt == 0 && _offlineTries < 3) {
+          _offlineTries++;
+          _generation++;
+          _teardownLink();
+          _setPhase(SessionPhase.connecting);
+          _retryTimer?.cancel();
+          _retryTimer = Timer(const Duration(seconds: 2), _connect);
+          return;
+        }
         _fail(
           _hostError ?? (ws.closeCode == 4404 ? 'Mac이 꺼져 있거나 인터넷에 연결돼 있지 않습니다. 링크의 Mac ID도 확인하세요.' : '연결이 종료되었습니다.'),
         );
@@ -358,9 +370,12 @@ class Session extends ChangeNotifier {
           _pendingCandidates.add(candidate);
         }
       case 'error':
+        final retry = message['retry'] == true;
+        // Retryable while the picture still flows peer to peer (the relay lost the Mac for a
+        // moment): only signaling is gone, which a running session doesn't need.
+        if (retry && phase == SessionPhase.connected) return;
         // The close frame can lag behind (especially through the relay); end now.
         _hostError = message['message'] as String?;
-        final retry = message['retry'] == true;
         if (!retry) _final = true;
         _fail(_hostError ?? '연결이 종료되었습니다.', retry: retry);
     }

@@ -66,6 +66,7 @@ class _ViewerPageState extends State<ViewerPage> {
   String _composingPreview = '';
   bool _showStats = false;
   bool _swallowPasteKey = false;
+  bool _warnedShortPassword = false;
 
   /// Hardware keyboard: Ctrl goes to the Mac as ⌘ (PC habits: Ctrl+C, Ctrl+V, Ctrl+A).
   bool _ctrlAsCmd = true;
@@ -189,6 +190,12 @@ class _ViewerPageState extends State<ViewerPage> {
       _leave(_session.error);
       return;
     }
+    if (_session.phase == SessionPhase.connected && !_warnedShortPassword && _session.password.length < 8) {
+      _warnedShortPassword = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _notice('비밀번호가 짧습니다. 설정에서 8자 이상으로 바꾸세요', seconds: 6);
+      });
+    }
     setState(() {});
   }
 
@@ -232,13 +239,13 @@ class _ViewerPageState extends State<ViewerPage> {
     if (name != null) _notice('🖥 $name');
   }
 
-  void _notice(String text) {
+  void _notice(String text, {double seconds = 1.5}) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
           content: Text(text),
-          duration: const Duration(milliseconds: 1500),
+          duration: Duration(milliseconds: (seconds * 1000).round()),
           behavior: SnackBarBehavior.floating,
           width: 320,
         ),

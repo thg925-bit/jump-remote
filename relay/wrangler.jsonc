@@ -12,6 +12,8 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
   // Keep the relay to your own Macs (IDs from the host menu link, comma separated):
   //   npx wrangler secret put HOST_IDS
+  // A Mac turned away with "등록 정보가 다릅니다" (its token changed): run setup-relay.command
+  // again, which sets HOST_RESET="<mac id>:<time>" so that Mac can claim its ID once more.
   // Optional TURN fallback (Cloudflare Realtime, first 1,000 GB/month free):
   //   npx wrangler secret put TURN_KEY_ID
   //   npx wrangler secret put TURN_KEY_API_TOKEN
