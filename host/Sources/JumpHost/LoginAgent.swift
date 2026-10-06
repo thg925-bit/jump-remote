@@ -94,11 +94,14 @@ enum LoginAgent {
         guard eligible, !isCurrentProcess, HostConfig.shared.launchAtLogin, isEnabled,
               ProcessInfo.processInfo.environment["JUMP_NO_HANDOVER"] == nil
         else { return false }
+        // launchd holds back a job that exited less than ThrottleInterval (10 s) ago, e.g. one
+        // just quit for an update: wait that out before falling back, or both copies start.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = [
-            "-c", "sleep 1; /bin/launchctl kickstart \"gui/$(id -u)/$1\"; sleep 5;"
-                + " /usr/bin/pgrep -x JumpHost >/dev/null || /usr/bin/open -n --env JUMP_NO_HANDOVER=1 \"$0\"",
+            "-c", "sleep 1; /bin/launchctl kickstart \"gui/$(id -u)/$1\";"
+                + " for i in $(/usr/bin/seq 15); do sleep 1; /usr/bin/pgrep -x JumpHost >/dev/null && exit 0; done;"
+                + " /usr/bin/open -n --env JUMP_NO_HANDOVER=1 \"$0\"",
             Bundle.main.bundlePath, label,
         ]
         do { try process.run() } catch { return false }

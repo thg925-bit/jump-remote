@@ -1545,11 +1545,11 @@ function layoutViewer() {
   const side = barsFree ? Math.min(r.left, W - r.left - r.width) : 0;
   const top = barsFree ? r.top : 0;
   const bottom = barsFree ? H - r.top - r.height : 0;
-  // A toolbar dragged to the stick's side takes that side; the stick moves to the other one
-  // (unless the stick itself was dragged somewhere).
+  // The stick stays on the side picked with 🖱. A toolbar docked on that same side moves across
+  // to the other one (dropping the toolbar there moves the stick instead: see the toolbar drag).
   const dockEdge = tbCustom ? nearestEdge(tbCustom.x * W, tbCustom.y * H, W, H) : null;
-  let stickRight = tpPlacement !== "left";
-  if (!tpCustom && ((dockEdge === "right" && stickRight) || (dockEdge === "left" && !stickRight))) stickRight = !stickRight;
+  const stickRight = tpPlacement !== "left";
+  const stickSide = tpCustom || tpPlacement === "hidden" ? null : tpPlacement;
   const kbarH = keyboardBarHeight(); // the on-screen keyboard's bar, when typing
   const floor = kbarH ? H - kbarH : H;
 
@@ -1585,7 +1585,7 @@ function layoutViewer() {
   let edge, along;
   if (tbCustom) {
     along = { x: tbCustom.x * W, y: tbCustom.y * H };
-    edge = dockEdge;
+    edge = !tbMoving && dockEdge === stickSide ? (stickSide === "right" ? "left" : "right") : dockEdge;
   } else if (side >= 64 || (W > H && navigator.maxTouchPoints > 0)) {
     edge = stickRight ? "left" : "right"; // a top row in landscape would cover the Mac's menu bar
     along = { x: 0, y: (bounds.t + bounds.b) / 2 };
@@ -1678,6 +1678,12 @@ for (const type of ["pointerup", "pointercancel"]) {
       if (!tbPress.moved) tbCustom = null; // held without dragging: back to automatic
       store.set("jump.toolbarPos", JSON.stringify(tbCustom));
       tbMoving = false;
+      // Dropped on the stick's side: the toolbar stays where it was put, the stick moves across.
+      if (tbCustom && !tpCustom && tpPlacement !== "hidden") {
+        const H = window.visualViewport ? visualViewport.height : innerHeight;
+        const dropped = nearestEdge(tbCustom.x * innerWidth, tbCustom.y * H, innerWidth, H);
+        if (dropped === tpPlacement) setPadPlacement(dropped === "right" ? "left" : "right");
+      }
       tbSnapUntil = performance.now() + 300;
       suppressToolbarClick = true; // the release mustn't also press a tile
       setTimeout(() => { suppressToolbarClick = false; }, 400);

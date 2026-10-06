@@ -396,17 +396,15 @@ class _ViewerPageState extends State<ViewerPage> {
     );
   }
 
-  /// A toolbar dragged to the stick's side takes that side; the stick moves to the other one
-  /// (unless the stick itself was dragged somewhere).
-  bool _stickOnRight(Size size) {
-    final onRight = _stickPlacement != 'left';
-    final custom = _toolbarCustom;
-    if (custom == null || _stickCustom != null) return onRight;
-    final edge = ToolbarPlacement.nearestEdge(Offset(custom.dx * size.width, custom.dy * size.height), size);
-    if (edge == ToolbarEdge.right && onRight) return false;
-    if (edge == ToolbarEdge.left && !onRight) return true;
-    return onRight;
-  }
+  /// The stick stays on the side picked with the mouse button. A toolbar docked on that same
+  /// side moves across to the other one (dropping the toolbar there moves the stick instead:
+  /// see [_toolbarLongPressEnd]).
+  bool _stickOnRight(Size size) => _stickPlacement != 'left';
+
+  /// The side the stick sits on, when it is docked to one (not hidden or dragged somewhere).
+  ToolbarEdge? get _stickEdge => _stickCustom != null || _stickPlacement == 'hidden'
+      ? null
+      : (_stickPlacement == 'left' ? ToolbarEdge.left : ToolbarEdge.right);
 
   /// The Mac's cursor, drawn here (the host leaves it out of the video).
   Widget _cursorOverlay(Rect videoRect) {
@@ -497,7 +495,10 @@ class _ViewerPageState extends State<ViewerPage> {
     final Offset along;
     if (_toolbarCustom != null) {
       along = Offset(_toolbarCustom!.dx * size.width, _toolbarCustom!.dy * size.height);
-      edge = ToolbarPlacement.nearestEdge(along, size);
+      final docked = ToolbarPlacement.nearestEdge(along, size);
+      edge = !_toolbarMoving && docked == _stickEdge
+          ? (docked == ToolbarEdge.right ? ToolbarEdge.left : ToolbarEdge.right)
+          : docked;
     } else if (layout.landscape) {
       edge = layout.toolbarOnLeft ? ToolbarEdge.left : ToolbarEdge.right;
       along = bounds.center;
@@ -588,6 +589,16 @@ class _ViewerPageState extends State<ViewerPage> {
       if (heldStill) _toolbarCustom = null; // long-press without dragging: back to automatic
     });
     final custom = _toolbarCustom;
+    // Dropped on the stick's side: the toolbar stays where it was put, the stick moves across.
+    final stickEdge = _stickEdge;
+    if (custom != null && stickEdge != null && !_viewSize.isEmpty) {
+      final dropped = ToolbarPlacement.nearestEdge(Offset(custom.dx * _viewSize.width, custom.dy * _viewSize.height), _viewSize);
+      if (dropped == stickEdge) {
+        final other = stickEdge == ToolbarEdge.right ? 'left' : 'right';
+        setState(() => _stickPlacement = other);
+        _savePreference('jump.stick', other);
+      }
+    }
     SharedPreferences.getInstance().then((prefs) {
       if (custom == null) {
         prefs.remove('jump.toolbarX');
