@@ -13,6 +13,9 @@ APP="build/JumpHost.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
 cp "$BIN/JumpHost" "$APP/Contents/MacOS/"
+# Debug-map entries hold this Mac's build paths (/Users/<name>/…): keep them out of a copy
+# that is handed out. Crash reports still name the app's own functions.
+strip -S "$APP/Contents/MacOS/JumpHost"
 cp Resources/Info.plist "$APP/Contents/"
 # RELAY_URL=https://… bakes a default relay into the bundle (a copy for someone who uses that
 # relay). Unset, the app only uses a relay configured on its own Mac.
