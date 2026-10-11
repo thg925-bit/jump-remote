@@ -98,6 +98,8 @@
   #sheet h3 { margin: 4px 0 0; font-size: 13px; font-weight: 600; color: var(--muted); }
   #sheet .row { display: flex; justify-content: space-between; align-items: center; }
   #sheet input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+  #sheet select { font: inherit; font-size: 16px; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px; max-width: 62%; }
   /* 16px keeps iOS from zooming the page when a field is focused. */
   #sheet .pw input { font: inherit; font-size: 16px; color: var(--text); background: var(--bg);
     border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; }
@@ -114,6 +116,12 @@
     border: 2px solid #fff; box-shadow: 0 0 0 1.5px rgba(0,0,0,.55), 0 0 8px rgba(0,0,0,.4);
     pointer-events: none; display: none; }
   #cursor.show { display: block; }
+  /* Under the finger: a flash for a tap, held while a touch keeps the mouse button down. */
+  #touchRing { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.85); background: rgba(255,255,255,.12); pointer-events: none;
+    opacity: 0; transform: scale(.6); transition: opacity .12s, transform .12s; }
+  #touchRing.show { opacity: 1; transform: scale(1); }
+  #touchRing.held { border-color: var(--accent); background: rgba(79,140,255,.22); }
   /* The Mac's real cursor shape, drawn here so it moves at display rate, not video rate. */
   #cursor.image { width: auto; height: auto; margin: 0; border: 0; border-radius: 0; box-shadow: none; display: block; }
   #cursor img { display: none; }
@@ -173,6 +181,16 @@
     display: none; font: inherit; font-size: 13px; font-weight: 600; color: #fff; background: var(--accent);
     border: 0; border-radius: 999px; padding: 8px 16px; box-shadow: 0 4px 14px rgba(0,0,0,.35); cursor: pointer; }
   #updateBtn.show { display: block; }
+
+  /* Toolbar folded away: two small buttons in a bottom corner (맞춤/채움, and unfold). */
+  #viewer[data-toolbar-collapsed="true"] #toolbar { display: none !important; }
+  #toolbarMini { position: absolute; display: flex; gap: 2px; padding: 4px; border-radius: 14px;
+    background: rgba(22,26,32,.78); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 6px 20px rgba(0,0,0,.22);
+    backdrop-filter: blur(10px) saturate(1.2); -webkit-backdrop-filter: blur(10px) saturate(1.2); }
+  #toolbarMini[hidden] { display: none; }
+  #toolbarMini button { width: 44px; height: 44px; padding: 0; display: grid; place-items: center; border: 0;
+    border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 21px; cursor: pointer; }
+  #toolbarMini button[aria-pressed="true"] { background: var(--accent); color: #fff; }
 </style>
 </head>
 <body>
@@ -195,11 +213,18 @@
     <div id="cursor"><img id="cursorImg" alt=""></div>
   </div>
   <div id="surface"></div>
+  <div id="toolbarMini" role="group" aria-label="화면 제어" hidden>
+    <button id="btnMiniFill" type="button" aria-pressed="false" title="화면 채우기">⤢</button>
+    <button id="btnMiniOpen" type="button" aria-label="도구 막대 펼치기" title="도구 막대 펼치기">☰</button>
+  </div>
   <div id="toolbar">
+    <button id="btnFold" class="tile" type="button" aria-label="도구 막대 접기"><i>‹</i><span>접기</span></button>
     <button id="btnMouse" class="tile" type="button"><i>🖱</i><span>오른쪽</span></button>
+    <button id="btnTouch" class="tile" type="button" title="화면 터치: 바로 클릭 ↔ 트랙패드"><i>👆</i><span>바로 클릭</span></button>
     <button id="btnSpeed" class="tile" type="button"><i>🎚</i><span>보통</span></button>
     <button id="btnDisplay" class="tile" type="button" style="display:none"><i>🖥</i><span>모니터</span></button>
     <button id="btnFill" class="tile" type="button"><i>⤢</i><span>맞춤</span></button>
+    <button id="btnHanEng" class="tile" type="button" title="Mac 입력 언어 전환 (한국어 ↔ 영어)"><i>한/A</i><span>한/영</span></button>
     <button id="btnKbd" class="tile" type="button"><i>⌨</i><span>키보드</span></button>
     <button id="btnSound" class="tile" type="button"><i>🔊</i><span>재생</span></button>
     <button id="btnSettings" class="tile" type="button"><i>⚙</i><span>설정</span></button>
@@ -208,6 +233,7 @@
   </div>
   <div id="stats"></div>
   <div id="tp"><div id="tpNub"></div><div id="tpHandle" title="끌어서 옮기기">✥</div></div>
+  <div id="touchRing"></div>
   <div id="safeProbe"></div>
   <div id="compose"></div>
   <div id="banner"></div>
@@ -244,6 +270,7 @@
     <label class="row"><span>통계 표시</span><input id="optStats" type="checkbox"></label>
     <label class="row"><span>클립보드 공유 (복사·붙여넣기)</span><input id="optClip" type="checkbox"></label>
     <label class="row"><span>Ctrl을 ⌘처럼 (윈도우 키보드)</span><input id="optCtrlCmd" type="checkbox"></label>
+    <label class="row"><span>화면 터치</span><select id="optTouchMode"><option value="direct">바로 클릭</option><option value="trackpad">트랙패드</option></select></label>
     <h3>Mac 비밀번호 변경</h3>
     <span class="pw"><input id="pwCurrent" type="password" placeholder="현재 비밀번호" autocomplete="current-password" autocapitalize="off" spellcheck="false"><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span>
     <span class="pw"><input id="pwNew" type="password" placeholder="새 비밀번호 (8자 이상)" autocomplete="new-password" autocapitalize="off" spellcheck="false"><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span>
@@ -349,7 +376,9 @@ const HID = (() => {
 const $ = (id) => document.getElementById(id);
 const ui = {
   connect: $("connect"), form: $("form"), host: $("host"), password: $("password"), go: $("go"), status: $("status"),
-  remember: $("remember"),
+  remember: $("remember"), optTouchMode: $("optTouchMode"), toolbarMini: $("toolbarMini"), btnMiniFill: $("btnMiniFill"),
+  btnMiniOpen: $("btnMiniOpen"), btnFold: $("btnFold"), btnHanEng: $("btnHanEng"), btnTouch: $("btnTouch"),
+  touchRing: $("touchRing"),
   viewer: $("viewer"), video: $("screen"), surface: $("surface"), toolbar: $("toolbar"), stats: $("stats"),
   kbd: $("kbd"), compose: $("compose"), banner: $("banner"), kbar: $("kbar"), kbarPreview: $("kbarPreview"),
   composeInput: $("composeInput"), composeSend: $("composeSend"), composeEnter: $("composeEnter"), composeUndo: $("composeUndo"),
@@ -841,6 +870,11 @@ class Session {
 
   /** `keepPicture`: leave the last frame up while reconnecting. */
   close(keepPicture = false) {
+    if (this === session && !this.closed) {
+      // Nothing stays pressed on the Mac: a drag in progress, keys held down.
+      cancelTouchGesture();
+      releaseHeldKeys((message) => this.sendInput(message));
+    }
     this.closed = true;
     clearTimeout(this.lossTimer);
     if (this.input) this.input.onclose = null;
@@ -1028,20 +1062,54 @@ function applyView() {
   layoutViewer();
 }
 
+/** The part of the page actually visible: Safari shrinks and shifts it for the on-screen
+ *  keyboard without changing innerWidth/innerHeight. The picture, the stick and the toolbar
+ *  live in it, above the keyboard bar. */
+function usableViewport() {
+  const vv = window.visualViewport;
+  return {
+    left: vv ? vv.offsetLeft : 0,
+    top: vv ? vv.offsetTop : 0,
+    width: Math.max(1, vv ? vv.width : innerWidth),
+    height: Math.max(1, (vv ? vv.height : innerHeight) - keyboardBarHeight()),
+  };
+}
+
 function clampView() {
   const r = videoRect();
+  const area = usableViewport();
   const axis = (v, start, length, extent) => {
     const size = length * view.scale;
     if (size <= extent) return (extent - size) / 2 - start * view.scale;
     return Math.min(Math.max(v, extent - (start + length) * view.scale), -start * view.scale);
   };
-  view.x = axis(view.x, r.left, r.width, innerWidth);
-  view.y = axis(view.y, r.top, r.height, innerHeight);
+  view.x = area.left + axis(view.x - area.left, r.left, r.width, area.width);
+  view.y = area.top + axis(view.y - area.top, r.top, r.height, area.height);
 }
 
 function fillScale() {
   const r = videoRect();
-  return Math.max(1, innerWidth / r.width, innerHeight / r.height);
+  const area = usableViewport();
+  return Math.max(1, area.width / r.width, area.height / r.height);
+}
+
+/** Puts the picture in the visible area; while typing it shows the whole Mac screen (채움 comes
+ *  back when the keyboard goes away). Only does anything when that area changed. */
+let pictureArea = "";
+function syncPictureViewport() {
+  const area = usableViewport();
+  const signature = JSON.stringify([area, keyboardOn()]);
+  if (signature === pictureArea) return;
+  pictureArea = signature;
+  for (const element of [ui.video, ui.surface]) {
+    Object.assign(element.style, { position: "absolute", inset: "auto", left: `${area.left}px`, top: `${area.top}px`,
+                                   width: `${area.width}px`, height: `${area.height}px` });
+  }
+  if (keyboardOn()) view.scale = 1;
+  else if (view.fill) view.scale = fillScale();
+  clampView();
+  ui.stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  drawCursor();
 }
 
 function setFill(on) {
@@ -1049,11 +1117,13 @@ function setFill(on) {
   store.set("jump.fill", on ? "1" : "0");
   setTile(ui.btnFill, on ? "⤡" : "⤢", on ? "채움" : "맞춤");
   ui.btnFill.classList.toggle("on", on);
-  if (on) {
+  syncMiniFill();
+  if (on && !keyboardOn()) {
     const r = videoRect();
+    const area = usableViewport();
     view.scale = fillScale();
-    view.x = innerWidth / 2 - (r.left + cursor.x * r.width) * view.scale;
-    view.y = innerHeight / 2 - (r.top + cursor.y * r.height) * view.scale;
+    view.x = area.left + area.width / 2 - (r.left + cursor.x * r.width) * view.scale;
+    view.y = area.top + area.height / 2 - (r.top + cursor.y * r.height) * view.scale;
   } else {
     view.scale = 1;
   }
@@ -1063,7 +1133,8 @@ function setFill(on) {
 
 /** After a resize or rotation. */
 function refitView() {
-  if (view.fill) view.scale = fillScale();
+  if (keyboardOn()) view.scale = 1;
+  else if (view.fill) view.scale = fillScale();
   clampView();
   applyView();
 }
@@ -1074,12 +1145,13 @@ function followCursor() {
   const r = videoRect();
   const sx = view.x + (r.left + cursor.x * r.width) * view.scale;
   const sy = view.y + (r.top + cursor.y * r.height) * view.scale;
-  const margin = 56;
+  const area = usableViewport();
+  const margin = Math.min(56, area.width / 4, area.height / 4);
   const before = [view.x, view.y];
-  if (sx < margin) view.x += margin - sx;
-  if (sx > innerWidth - margin) view.x -= sx - (innerWidth - margin);
-  if (sy < margin) view.y += margin - sy;
-  if (sy > innerHeight - margin) view.y -= sy - (innerHeight - margin);
+  if (sx < area.left + margin) view.x += area.left + margin - sx;
+  if (sx > area.left + area.width - margin) view.x -= sx - (area.left + area.width - margin);
+  if (sy < area.top + margin) view.y += area.top + margin - sy;
+  if (sy > area.top + area.height - margin) view.y -= sy - (area.top + area.height - margin);
   clampView();
   if (view.x !== before[0] || view.y !== before[1]) applyView();
 }
@@ -1137,13 +1209,27 @@ ui.surface.addEventListener("wheel", (e) => {
   send({ t: "scroll", dx: -e.deltaX * unit, dy: -e.deltaY * unit });
 }, { passive: false });
 
-// Touch on the screen: tap = click where touched, drag = drag, long press = right click,
-// two-finger tap = right click, two-finger drag = scroll.
+// Touch on the screen: two modes, as in Chrome Remote Desktop (toolbar 👆/✋, or ⚙ 설정).
+//  바로 클릭 (touch mode): tap = click where touched (a quick tap next to the previous one lands
+//    exactly on it, so double clicks register); hold, then drag = drag; one-finger drag = scroll
+//    (moves the view instead while zoomed in).
+//  트랙패드 (trackpad mode): the whole screen is a trackpad: drag = move the cursor (macOS pointer
+//    acceleration, like the stick); tap = click at the cursor; hold, then drag = drag.
+// Both: two-finger tap = right click, three-finger tap = middle click, two-finger drag = scroll,
+// pinch = zoom.
 const touches = new Map();
-let gesture = null; // { kind: "pending" | "drag" | "two" | "done", ... }
+const TOUCH_MODES = {
+  direct: { icon: "👆", label: "바로 클릭", hint: "바로 클릭: 누른 곳 클릭, 길게 누른 뒤 끌면 드래그" },
+  trackpad: { icon: "✋", label: "트랙패드", hint: "트랙패드: 끌면 커서 이동, 탭하면 클릭" },
+};
+let touchMode = store.get("jump.touchMode") === "trackpad" ? "trackpad" : "direct";
+let gesture = null; // { kind: "pending" | "held" | "track" | "scroll" | "pan" | "two" | "three" | "done", ... }
 const LONG_PRESS_MS = 500;
 const DRAG_SLOP = 8;
 const TAP_MS = 250;
+const DOUBLE_TAP_MS = 500;   // macOS's default double-click interval
+const DOUBLE_TAP_SLOP = 25;  // CSS px
+let lastTap = null;          // { time, client, p } of the last one-finger tap (바로 클릭)
 
 let cursor = { x: 0.5, y: 0.5 }; // last pointer position sent, normalized
 const clamp01 = (v) => Math.min(Math.max(v, 0), 1);
@@ -1201,20 +1287,82 @@ function touchDown(e) {
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (touches.size === 1) {
     const start = { x: e.clientX, y: e.clientY };
-    gesture = { kind: "pending", start, timer: setTimeout(() => longPress(start), LONG_PRESS_MS) };
+    gesture = { kind: "pending", start, last: start, samples: [{ t: e.timeStamp, ...start }],
+                timer: setTimeout(longPress, LONG_PRESS_MS) };
   } else if (touches.size === 2) {
-    if (gesture && gesture.kind === "drag") send({ t: "up", b: 0, ...cursor });
+    // A second finger during a one-finger gesture: that one ends, and this is no tap.
+    const interrupted = !!gesture && gesture.kind !== "pending";
+    endTouchDrag();
     if (gesture) clearTimeout(gesture.timer);
+    const center = touchCenter();
     gesture = {
-      kind: "two", center: touchCenter(), time: performance.now(), moved: false, mode: null,
-      startCenter: touchCenter(), startDistance: Math.max(touchDistance(), 1), startView: { ...view },
+      kind: "two", center, time: performance.now(), moved: interrupted, mode: null,
+      startCenter: center, startDistance: Math.max(touchDistance(), 1), startView: { ...view },
     };
+  } else if (touches.size === 3 && gesture && gesture.kind === "two" && !gesture.moved) {
+    gesture = { kind: "three", time: gesture.time, center: touchCenter(), starts: new Map(touches), moved: false };
+  } else {
+    cancelTouchGesture(); // more fingers, or a third mid-gesture: drop it rather than guess
   }
+}
+
+/** Lets go of the mouse button a held touch is keeping down on the Mac, if any. */
+function endTouchDrag() {
+  if (!gesture || gesture.kind !== "held") return;
+  gesture = { kind: "done" };
+  send({ t: "up", b: 0, ...cursor });
+  showTouchRing(null);
+}
+
+/** Drops the touch gesture without leaving anything pressed on the Mac (the page lost the
+ *  fingers: another app, a system gesture, the connection closing). */
+function cancelTouchGesture() {
+  if (gesture && gesture.timer) clearTimeout(gesture.timer);
+  endTouchDrag();
+  touches.clear();
+  gesture = null;
+}
+
+function setTouchMode(mode) {
+  if (!TOUCH_MODES[mode]) return;
+  if (mode !== touchMode) cancelTouchGesture();
+  touchMode = mode;
+  lastTap = null;
+  store.set("jump.touchMode", mode);
+  ui.optTouchMode.value = mode;
+  setTile(ui.btnTouch, TOUCH_MODES[mode].icon, TOUCH_MODES[mode].label);
+  ui.btnTouch.classList.toggle("on", mode === "trackpad");
+  ui.cursor.classList.toggle("show", mode === "trackpad" || tpPlacement !== "hidden" || !!cursorShape);
+}
+
+/** Pinch: keep the point that was under the fingers under them. */
+function applyTouchZoom(g, center, ratio) {
+  const s0 = g.startView;
+  const scale = Math.min(Math.max(s0.scale * ratio, 1), MAX_ZOOM);
+  const ax = (g.startCenter.x - s0.x) / s0.scale, ay = (g.startCenter.y - s0.y) / s0.scale;
+  view.scale = scale;
+  view.x = center.x - ax * scale;
+  view.y = center.y - ay * scale;
+  if (scale <= 1.001 && view.fill) setFill(false);
+  clampView();
+  applyView();
 }
 
 function touchDistance() {
   const [a, b] = [...touches.values()];
   return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 1;
+}
+
+/** 트랙패드: move the cursor by the finger's travel, through macOS's pointer acceleration. */
+function trackBy(g, e) {
+  const dx = e.clientX - g.last.x, dy = e.clientY - g.last.y;
+  g.samples.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
+  while (g.samples.length > 2 && e.timeStamp - g.samples[0].t > TP_VELOCITY_WINDOW_MS) g.samples.shift();
+  const first = g.samples[0];
+  const seconds = (e.timeStamp - first.t) / 1000;
+  const inches = Math.hypot(e.clientX - first.x, e.clientY - first.y) / CSS_PX_PER_INCH;
+  const gain = trackpadGain(seconds > 0 ? inches / seconds : 0);
+  moveByPoints(dx * gain, dy * gain);
 }
 
 ui.surface.addEventListener("pointermove", (e) => {
@@ -1224,63 +1372,153 @@ ui.surface.addEventListener("pointermove", (e) => {
   if (gesture.kind === "pending") {
     if (Math.hypot(e.clientX - gesture.start.x, e.clientY - gesture.start.y) <= DRAG_SLOP) return;
     clearTimeout(gesture.timer);
-    const p = normalize(gesture.start.x, gesture.start.y);
-    sendMove(p);
-    send({ t: "down", b: 0, ...p });
-    gesture = { kind: "drag" };
-  }
-  if (gesture.kind === "drag") {
-    sendMove(normalize(e.clientX, e.clientY));
-  } else if (gesture.kind === "two" && touches.size >= 2) {
-    const center = touchCenter();
-    const ratio = touchDistance() / gesture.startDistance;
-    if (!gesture.mode) {
-      if (Math.abs(ratio - 1) > 0.12) gesture.mode = "zoom";
-      else if (Math.hypot(center.x - gesture.startCenter.x, center.y - gesture.startCenter.y) > DRAG_SLOP) gesture.mode = "scroll";
-      else return;
-      gesture.moved = true;
+    const { start, samples } = gesture;
+    if (touchMode === "trackpad") {
+      gesture = { kind: "track", last: start, samples };
+    } else if (view.scale > 1.001) {
+      gesture = { kind: "pan", last: start };
+    } else {
+      sendMove(normalize(start.x, start.y)); // so the window under the finger is the one that scrolls
+      gesture = { kind: "scroll", last: start };
     }
-    if (gesture.mode === "zoom") {
-      // Keep the point that was under the fingers under them.
-      const s0 = gesture.startView;
-      const scale = Math.min(Math.max(s0.scale * ratio, 1), MAX_ZOOM);
-      const ax = (gesture.startCenter.x - s0.x) / s0.scale, ay = (gesture.startCenter.y - s0.y) / s0.scale;
-      view.scale = scale;
-      view.x = center.x - ax * scale;
-      view.y = center.y - ay * scale;
-      if (scale <= 1.001 && view.fill) setFill(false);
-      clampView();
-      applyView();
+  }
+  const g = gesture;
+  const dx = g.last ? e.clientX - g.last.x : 0, dy = g.last ? e.clientY - g.last.y : 0;
+  if (g.kind === "track") {
+    trackBy(g, e);
+  } else if (g.kind === "held") {
+    if (touchMode === "trackpad") trackBy(g, e);
+    else sendMove(normalize(e.clientX, e.clientY));
+    showTouchRing(touchMode === "trackpad" ? cursorOnScreen() : { x: e.clientX, y: e.clientY }, true);
+  } else if (g.kind === "pan") {
+    view.x += dx;
+    view.y += dy;
+    clampView();
+    applyView();
+  } else if (g.kind === "scroll") {
+    const k = pointsPerCssPixel();
+    if (dx || dy) send({ t: "scroll", dx: dx * k, dy: dy * k });
+  } else if (g.kind === "two" && touches.size >= 2) {
+    const center = touchCenter();
+    const ratio = touchDistance() / g.startDistance;
+    if (!g.mode) {
+      if (Math.abs(ratio - 1) > 0.12) {
+        g.mode = "zoom";
+      } else if (Math.hypot(center.x - g.startCenter.x, center.y - g.startCenter.y) > DRAG_SLOP) {
+        g.mode = "scroll";
+        if (touchMode === "direct") sendMove(normalize(g.startCenter.x, g.startCenter.y));
+      } else {
+        return;
+      }
+      g.moved = true;
+    }
+    if (g.mode === "zoom") {
+      applyTouchZoom(g, center, ratio);
     } else {
       const k = pointsPerCssPixel();
-      send({ t: "scroll", dx: (center.x - gesture.center.x) * k, dy: (center.y - gesture.center.y) * k });
+      send({ t: "scroll", dx: (center.x - g.center.x) * k, dy: (center.y - g.center.y) * k });
     }
-    gesture.center = center;
+    g.center = center;
+  } else if (g.kind === "three") {
+    const start = g.starts.get(e.pointerId);
+    if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > DRAG_SLOP) g.moved = true;
   }
+  if (gesture === g && g.last) g.last = { x: e.clientX, y: e.clientY };
 });
 
 function touchUp(e, cancelled = false) {
+  if (!touches.has(e.pointerId)) return;
+  if (cancelled) return cancelTouchGesture();
   touches.delete(e.pointerId);
   if (!gesture) return;
-  if (gesture.kind === "pending" && !cancelled) {
+  const quick = (limit) => performance.now() - gesture.time < limit;
+  if (gesture.kind === "pending") {
     clearTimeout(gesture.timer);
-    click(0, normalize(gesture.start.x, gesture.start.y));
-  } else if (gesture.kind === "drag") {
-    send({ t: "up", b: 0, ...cursor });
-  } else if (gesture.kind === "two" && !cancelled && !gesture.moved && performance.now() - gesture.time < TAP_MS) {
-    click(1, normalize(gesture.center.x, gesture.center.y));
+    tap(gesture.start);
+  } else if (gesture.kind === "held") {
+    endTouchDrag();
+  } else if (gesture.kind === "two" && !gesture.moved && quick(TAP_MS)) {
+    clickAt(1, gesture.startCenter);
+    gesture = { kind: "done" };
+  } else if (gesture.kind === "three" && !gesture.moved && quick(TAP_MS * 1.6)) {
+    clickAt(2, gesture.center);
     gesture = { kind: "done" };
   }
   if (touches.size === 0) gesture = null;
-  else if (gesture.kind !== "two") gesture = { kind: "done" };
+  else if (gesture && gesture.kind !== "two" && gesture.kind !== "three") gesture = { kind: "done" };
 }
 
-function longPress(start) {
+/** One-finger tap. 바로 클릭: at the finger, and a quick tap next to the last one lands exactly on
+ *  it (fingers never hit the same pixel twice; the Mac then sees a double or triple click). */
+function tap(point) {
+  if (touchMode === "trackpad") return clickAt(0, point);
+  const now = performance.now();
+  let p = normalize(point.x, point.y);
+  if (lastTap && now - lastTap.time < DOUBLE_TAP_MS
+      && Math.hypot(point.x - lastTap.client.x, point.y - lastTap.client.y) <= DOUBLE_TAP_SLOP) {
+    p = lastTap.p;
+    lastTap = { ...lastTap, time: now };
+  } else {
+    lastTap = { time: now, client: point, p };
+  }
+  click(0, p);
+  flashTouchRing(point);
+}
+
+/** A click with `button` (0 left, 1 right, 2 middle): where the fingers are, or at the cursor
+ *  in 트랙패드. */
+function clickAt(button, point) {
+  lastTap = null;
+  if (touchMode === "trackpad") {
+    send({ t: "down", b: button, ...cursor }); // two taps in a row: the Mac counts a double click
+    send({ t: "up", b: button, ...cursor });
+    flashTouchRing(cursorOnScreen());
+  } else {
+    click(button, normalize(point.x, point.y));
+    flashTouchRing(point);
+  }
+}
+
+/** Held still: press the left button and keep it down (바로 클릭: where the finger is); moving on
+ *  drags, lifting lets go. */
+function longPress() {
   if (!gesture || gesture.kind !== "pending") return;
-  click(1, normalize(start.x, start.y));
-  gesture = { kind: "done" };
+  const { start, samples } = gesture;
+  lastTap = null;
+  if (touchMode === "direct") sendMove(normalize(start.x, start.y));
+  send({ t: "down", b: 0, c: 1, ...cursor });
+  gesture = { kind: "held", last: start, samples };
+  showTouchRing(touchMode === "trackpad" ? cursorOnScreen() : start, true);
   if (navigator.vibrate) navigator.vibrate(15);
 }
+
+/** Where the Mac's cursor is on this screen. */
+function cursorOnScreen() {
+  const r = videoRect();
+  return { x: view.x + (r.left + cursor.x * r.width) * view.scale, y: view.y + (r.top + cursor.y * r.height) * view.scale };
+}
+
+/** A ring under the finger: briefly for a tap, held while the button is down. */
+let touchRingTimer = null;
+function showTouchRing(point, held = false) {
+  clearTimeout(touchRingTimer);
+  ui.touchRing.classList.toggle("held", held);
+  if (!point) return ui.touchRing.classList.remove("show");
+  Object.assign(ui.touchRing.style, { left: `${point.x}px`, top: `${point.y}px` });
+  ui.touchRing.classList.add("show");
+}
+function flashTouchRing(point) {
+  showTouchRing(point);
+  touchRingTimer = setTimeout(() => ui.touchRing.classList.remove("show"), 180);
+}
+
+// The page losing a finger without a pointerup (capture taken away, the app switched away):
+// let go of whatever the gesture was holding.
+ui.surface.addEventListener("lostpointercapture", (e) => {
+  if (e.pointerType === "touch" && touches.has(e.pointerId)) cancelTouchGesture();
+});
+window.addEventListener("blur", cancelTouchGesture);
+document.addEventListener("visibilitychange", () => { if (document.hidden) cancelTouchGesture(); });
 
 function touchCenter() {
   let x = 0, y = 0;
@@ -1359,7 +1597,7 @@ function setPadPlacement(placement) {
   store.set("jump.ball", placement);
   const visible = placement !== "hidden";
   ui.tp.classList.toggle("show", visible);
-  ui.cursor.classList.toggle("show", visible || !!cursorShape);
+  ui.cursor.classList.toggle("show", visible || !!cursorShape || touchMode === "trackpad");
   ui.btnMouse.classList.toggle("on", visible);
   if (!visible) releaseTrackPoint();
   drawCursor();
@@ -1537,10 +1775,14 @@ function placeToolbar({ edge, count, bounds, along, avoid = null, floating = fal
 
 function layoutViewer() {
   if (!ui.viewer.classList.contains("active")) return;
-  const W = innerWidth;
+  syncPictureViewport();
+  // Everything below is laid out in the visible area (it moves with Safari's on-screen keyboard).
+  const area = usableViewport();
+  const W = area.width;
   const H = window.visualViewport ? visualViewport.height : innerHeight; // above the soft keyboard
   const safe = safeInsets();
-  const r = videoRect();
+  const shown = videoRect();
+  const r = { ...shown, left: shown.left - area.left, top: shown.top - area.top };
   const barsFree = ui.video.videoWidth > 0 && view.scale <= 1.001;
   const side = barsFree ? Math.min(r.left, W - r.left - r.width) : 0;
   const top = barsFree ? r.top : 0;
@@ -1573,7 +1815,8 @@ function layoutViewer() {
   }
   cx = Math.min(Math.max(cx, d / 2), W - d / 2);
   cy = Math.min(Math.max(cy, d / 2), H - d / 2);
-  Object.assign(ui.tp.style, { left: `${cx - d / 2}px`, top: `${cy - d / 2}px`, width: `${d}px`, height: `${d}px` });
+  Object.assign(ui.tp.style, { left: `${area.left + cx - d / 2}px`, top: `${area.top + cy - d / 2}px`, width: `${d}px`, height: `${d}px` });
+  placeToolbarMini();
 
   // Toolbar: one line along an edge — where it was dragged (the nearest of the four edges; it
   // follows the finger while moving), else the side opposite the stick in landscape on a touch
@@ -1601,7 +1844,7 @@ function layoutViewer() {
   const gap = 2 * place.scale, tile = place.pitch - gap;
   tb.classList.toggle("compact", place.compact);
   Object.assign(tb.style, {
-    left: `${place.x}px`, top: `${place.y}px`, width: `${place.w}px`, height: `${place.h}px`,
+    left: `${area.left + place.x}px`, top: `${area.top + place.y}px`, width: `${place.w}px`, height: `${place.h}px`,
     gap: `${gap}px`, gridAutoFlow: place.vertical ? "column" : "row",
     [place.vertical ? "gridTemplateRows" : "gridTemplateColumns"]: `repeat(${place.perLine}, ${tile}px)`,
   });
@@ -1609,8 +1852,9 @@ function layoutViewer() {
   tb.style.setProperty("--tile-scale", place.scale);
   for (const span of tb.querySelectorAll(".tile span")) fitLabel(span);
   const toolbarSide = place.vertical ? place.edge : null;
-  ui.stats.style.left = toolbarSide === "left" ? `${place.x + place.w + 8}px` : "";
-  ui.stats.style.right = toolbarSide === "right" ? `${W - place.x + 8}px` : "";
+  const folded = ui.viewer.dataset.toolbarCollapsed === "true";
+  ui.stats.style.left = toolbarSide === "left" && !folded ? `${area.left + place.x + place.w + 8}px` : "";
+  ui.stats.style.right = toolbarSide === "right" && !folded ? `${innerWidth - area.left - place.x + 8}px` : "";
   setTile(ui.btnMouse, "🖱", tpCustom && tpPlacement !== "hidden" ? "직접" : { right: "오른쪽", left: "왼쪽", hidden: "끔" }[tpPlacement]);
 }
 
@@ -1699,7 +1943,47 @@ ui.toolbar.addEventListener("click", (e) => {
 }, true);
 
 window.addEventListener("resize", () => { refitView(); drawCursor(); });
-if (window.visualViewport) visualViewport.addEventListener("resize", layoutViewer);
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", layoutViewer);
+  visualViewport.addEventListener("scroll", () => { layoutViewer(); drawCursor(); });
+}
+
+// ---------- Folding the toolbar ----------
+// "접기" hides the toolbar; two small buttons stay in a bottom corner, clear of the stick:
+// 맞춤↔채움 and one to bring the toolbar back. Remembered.
+function syncMiniFill() {
+  const label = view.fill ? "전체 화면 맞춤" : "화면 채우기";
+  ui.btnMiniFill.textContent = view.fill ? "⤡" : "⤢";
+  ui.btnMiniFill.setAttribute("aria-label", label);
+  ui.btnMiniFill.setAttribute("aria-pressed", String(view.fill));
+  ui.btnMiniFill.title = label;
+}
+
+function placeToolbarMini() {
+  if (ui.toolbarMini.hidden) return;
+  const area = usableViewport();
+  const safe = safeInsets();
+  const box = ui.toolbarMini.getBoundingClientRect();
+  const w = box.width || 102, h = box.height || 54;
+  const left = area.left + Math.max(8, safe.left);
+  const right = Math.max(left, area.left + area.width - w - Math.max(8, safe.right));
+  const y = Math.max(area.top + Math.max(8, safe.top), area.top + area.height - h - Math.max(8, safe.bottom));
+  const stick = ui.tp.classList.contains("show") ? ui.tp.getBoundingClientRect() : null;
+  const hits = (x) => stick && x < stick.right + 8 && x + w > stick.left - 8 && y < stick.bottom + 8 && y + h > stick.top - 8;
+  const x = [right, left].find((x) => !hits(x)) ?? right;
+  Object.assign(ui.toolbarMini.style, { left: `${x}px`, top: `${y}px` });
+}
+
+function setToolbarFolded(folded) {
+  ui.viewer.dataset.toolbarCollapsed = String(folded);
+  ui.toolbarMini.hidden = !folded;
+  store.set("jump.toolbarCollapsed", folded ? "1" : "0");
+  layoutViewer();
+  placeToolbarMini();
+}
+ui.btnFold.addEventListener("click", () => setToolbarFolded(true));
+tapKeepingKeyboard(ui.btnMiniOpen, () => setToolbarFolded(false));
+tapKeepingKeyboard(ui.btnMiniFill, () => setFill(!view.fill));
 ui.video.addEventListener("resize", () => { refitView(); layoutViewer(); drawCursor(); });
 
 // ---------- Keyboard ----------
@@ -1749,6 +2033,10 @@ function positionKeyboardBar() {
   const vv = window.visualViewport;
   const bottom = vv ? vv.offsetTop + vv.height : innerHeight;
   ui.kbar.style.top = `${bottom - ui.kbar.offsetHeight}px`;
+  // As wide as what is visible, also when Safari has shifted the page sideways.
+  ui.kbar.style.left = `${vv ? vv.offsetLeft : 0}px`;
+  ui.kbar.style.right = "auto";
+  ui.kbar.style.width = `${vv ? vv.width : innerWidth}px`;
 }
 const keyboardBarHeight = () => (ui.kbar.classList.contains("show") ? ui.kbar.offsetHeight : 0);
 
@@ -1864,26 +2152,43 @@ const isModifierCode = (code) => code >= 0x700e0 && code <= 0x700e7;
 // The Mac switches its input source on this code (macOS itself ignores the key).
 const keyCode = (e) => (e.key === "HangulMode" ? HID("Lang1") : HID(macCode(e.code)));
 
+// Keys that are down on the Mac (DOM code -> what was sent), so a key comes up as what went down
+// (Ctrl→⌘ may have been switched meanwhile) and nothing is left held when the page loses them.
+const hardwareKeys = new Map();
+const MODIFIER_CODES = ["ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight"];
+function releaseHeldKeys(sendTo = send) {
+  for (const code of hardwareKeys.values()) sendTo({ t: "key", code, down: false });
+  for (const name of MODIFIER_CODES) sendTo({ t: "key", code: HID(name), down: false });
+  hardwareKeys.clear();
+  heldModifiers.clear();
+}
+
+// A physical keyboard while the on-screen keyboard's field has the focus (an iPad with a keyboard
+// attached, ⌨ open): its keys go to the Mac as keys, where the Mac's own input source composes
+// Korean, and whatever this device's input method makes of them locally is dropped. The
+// on-screen keyboard has no physical keys (no `code`); its text is still typed as text.
+let hardwareTypingUntil = 0;
+const hardwareTyping = () => performance.now() < hardwareTypingUntil;
+
 window.addEventListener("keydown", (e) => {
   if (!ui.viewer.classList.contains("active") || ownsKeys(e.target)) return;
   const code = keyCode(e);
-  const inSoftKeyboard = document.activeElement === ui.kbd;
-  if (inSoftKeyboard && (e.isComposing || e.keyCode === 229 || !code)) return; // IME owns it
-  if (!code) return;
-  if (inSoftKeyboard && !["Enter", "Backspace", "Tab", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.code)
-      && !e.metaKey && !e.ctrlKey) return; // printable soft-keyboard keys arrive as text
+  if (!code) return; // the on-screen keyboard: its text arrives through the field below
+  if (document.activeElement === ui.kbd) hardwareTypingUntil = performance.now() + 1500;
   if (isModifierCode(code)) heldModifiers.add(code);
   else syncModifiers(e);
   if (clipboard.startPaste(e)) return; // no preventDefault: the browser's paste event comes next
   e.preventDefault();
+  if (!isModifierCode(code)) hardwareKeys.set(e.code || e.key, code);
   send({ t: "key", code, down: true });
 });
 
 window.addEventListener("keyup", (e) => {
   if (!ui.viewer.classList.contains("active") || ownsKeys(e.target)) return;
-  const code = keyCode(e);
+  const held = hardwareKeys.get(e.code || e.key);
+  const code = held || keyCode(e);
   if (!code) return;
-  if (document.activeElement === ui.kbd && (e.isComposing || e.keyCode === 229)) return;
+  hardwareKeys.delete(e.code || e.key);
   e.preventDefault();
   if (e.code === "KeyV" && clipboard.swallowKeyUp) { clipboard.swallowKeyUp = false; return; } // sent with the paste
   if (isModifierCode(code)) {
@@ -1897,22 +2202,24 @@ window.addEventListener("keyup", (e) => {
   send({ t: "key", code, down: false });
 });
 
-window.addEventListener("blur", () => {
-  // Don't leave modifiers stuck on the Mac when the tab loses focus.
-  for (const code of ["ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight"]) {
-    send({ t: "key", code: HID(code), down: false });
-  }
-  heldModifiers.clear();
-});
+// Don't leave keys stuck on the Mac when the page loses the keyboard (another tab or app).
+window.addEventListener("blur", () => releaseHeldKeys());
+document.addEventListener("visibilitychange", () => { if (document.hidden) releaseHeldKeys(); });
 
+ui.kbd.addEventListener("beforeinput", (e) => { if (hardwareTyping() && e.cancelable) e.preventDefault(); });
 ui.kbd.addEventListener("compositionstart", () => { composing = true; });
-ui.kbd.addEventListener("compositionupdate", (e) => { ui.kbarPreview.textContent = e.data || ""; });
+ui.kbd.addEventListener("compositionupdate", (e) => { ui.kbarPreview.textContent = hardwareTyping() ? "" : e.data || ""; });
 ui.kbd.addEventListener("compositionend", () => {
   composing = false;
   ui.kbarPreview.textContent = "";
-  flushSoftKeyboard();
+  if (hardwareTyping()) ui.kbd.value = SENTINEL; // already sent as keys
+  else flushSoftKeyboard();
 });
-ui.kbd.addEventListener("input", () => { if (!composing) flushSoftKeyboard(); });
+ui.kbd.addEventListener("input", () => {
+  if (composing) return;
+  if (hardwareTyping()) ui.kbd.value = SENTINEL; // already sent as keys
+  else flushSoftKeyboard();
+});
 
 function flushSoftKeyboard() {
   const value = ui.kbd.value;
@@ -1945,6 +2252,12 @@ ui.btnMouse.addEventListener("click", () => {
   setPadPlacement(TP_PLACEMENTS[(TP_PLACEMENTS.indexOf(tpPlacement) + 1) % TP_PLACEMENTS.length]);
 });
 ui.btnFill.addEventListener("click", () => setFill(!view.fill));
+// 한/영: HID LANG1, which the Mac turns into a switch of its input source (Korean ↔ the last
+// Latin layout), whatever its own shortcut for that is.
+ui.btnHanEng.addEventListener("click", () => {
+  keyTap(HID("Lang1"));
+  toast("Mac 입력 언어 전환");
+});
 setTile(ui.btnFill, view.fill ? "⤡" : "⤢", view.fill ? "채움" : "맞춤");
 ui.btnFill.classList.toggle("on", view.fill);
 ui.btnSound.addEventListener("click", () => {
@@ -1983,6 +2296,16 @@ ui.optCtrlCmd.addEventListener("change", () => {
   heldModifiers.clear();
 });
 ui.optClip.addEventListener("change", () => store.set("jump.clip", ui.optClip.checked ? "1" : "0"));
+ui.optTouchMode.addEventListener("change", () => setTouchMode(ui.optTouchMode.value));
+// Only touch screens have a use for it.
+if (!navigator.maxTouchPoints) ui.btnTouch.style.display = "none";
+ui.btnTouch.addEventListener("click", () => {
+  setTouchMode(touchMode === "direct" ? "trackpad" : "direct");
+  toast(TOUCH_MODES[touchMode].hint, 2500);
+});
+setTouchMode(touchMode);
+syncMiniFill();
+setToolbarFolded(store.get("jump.toolbarCollapsed") === "1");
 
 // ---------- Toast ----------
 let toastTimer = null;

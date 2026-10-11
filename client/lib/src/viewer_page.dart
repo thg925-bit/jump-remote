@@ -45,7 +45,16 @@ class _ViewerPageState extends State<ViewerPage> {
     onViewChanged: () {
       if (mounted) setState(() {});
     },
+    cursor: () => _session.cursor.value,
+    moveCursorBy: (points) => _session.moveCursorBy(points),
+    onHold: HapticFeedback.mediumImpact,
   );
+
+  /// Leaving the app mid-gesture must not leave the mouse button down on the Mac.
+  late final AppLifecycleListener _lifecycle;
+
+  /// The toolbar folded away to two small corner buttons.
+  bool _toolbarFolded = false;
   final _keyFocus = FocusNode(debugLabel: 'hardware-keys');
   final _textFocus = FocusNode(debugLabel: 'soft-keyboard');
   final _text = TextEditingController(text: _sentinel);
@@ -120,6 +129,7 @@ class _ViewerPageState extends State<ViewerPage> {
     _compose.addListener(() {
       if (mounted) setState(() {}); // 전송 enables with text
     });
+    _lifecycle = AppLifecycleListener(onInactive: _pointer.cancelGesture, onHide: _pointer.cancelGesture);
     WakelockPlus.enable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     SharedPreferences.getInstance().then((prefs) {
@@ -131,6 +141,9 @@ class _ViewerPageState extends State<ViewerPage> {
         _speed = MacTrackpad.speeds.containsKey(prefs.getString('jump.speed'))
             ? prefs.getString('jump.speed')!
             : 'normal';
+        _pointer.trackingSpeed = MacTrackpad.speeds[_speed]!.$2;
+        _pointer.mode = prefs.getString('jump.touchMode') == 'trackpad' ? TouchMode.trackpad : TouchMode.direct;
+        _toolbarFolded = prefs.getBool('jump.toolbarFolded') ?? false;
         _rotation = _rotations.contains(prefs.getString('jump.rotation')) ? prefs.getString('jump.rotation')! : 'auto';
         _pointer.fill = prefs.getBool('jump.fill') ?? false;
         _session.shareClipboard = prefs.getBool('jump.clip') ?? true;
@@ -172,6 +185,8 @@ class _ViewerPageState extends State<ViewerPage> {
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _applyRotation('system');
+    _lifecycle.dispose();
+    _pointer.cancelGesture();
     _keyFocus.dispose();
     _textFocus.dispose();
     _composeFocus.dispose();
@@ -322,7 +337,7 @@ class _ViewerPageState extends State<ViewerPage> {
                     ),
                   if (connected && _stickPlacement != 'hidden') _stick(size, layout.stick),
                   if (keyboardOn) Positioned(left: 0, right: 0, bottom: 0, child: _keyboardBar()),
-                  _toolbar(layout),
+                  if (_toolbarFolded) _toolbarMini(size, layout, connected) else _toolbar(layout),
                   if (_showStats && _session.statsText.isNotEmpty)
                     SafeArea(
                       child: Align(
@@ -450,13 +465,16 @@ class _ViewerPageState extends State<ViewerPage> {
   /// Solid when it sits in a bar, translucent when it has to overlap the Mac screen.
   Widget _toolbar(ViewerLayout layout) {
     final muted = _session.audio.muted;
+    final trackpad = _pointer.mode == TouchMode.trackpad;
     final items = <_ToolItem>[
+      _ToolItem(Icons.chevron_left, '접기', false, () => _setToolbarFolded(true)),
       _ToolItem(
         Icons.mouse,
         _stickCustom != null && _stickPlacement != 'hidden' ? '직접' : _placementLabels[_stickPlacement]!,
         _stickPlacement != 'hidden',
         _cycleStick,
       ),
+      _ToolItem(trackpad ? Icons.pan_tool : Icons.touch_app, trackpad ? '트랙\n패드' : '바로\n클릭', trackpad, _toggleTouchMode),
       _ToolItem(Icons.screen_rotation, _rotationLabels[_rotation]!, _rotation != 'auto', _cycleRotation),
       if (_session.displays.length > 1)
         _ToolItem(Icons.monitor, '모니터\n${_displayIndex() + 1}/${_session.displays.length}', false, _nextDisplay),
@@ -466,6 +484,7 @@ class _ViewerPageState extends State<ViewerPage> {
         _pointer.fill,
         _toggleFill,
       ),
+      _ToolItem(Icons.translate, '한/영', false, _switchInputSource),
       _ToolItem(Icons.keyboard, '키보드', _keyboardOn, _toggleKeyboard),
       // Names where sound comes out; the host mutes the Mac while we play.
       _ToolItem(
@@ -652,6 +671,74 @@ class _ViewerPageState extends State<ViewerPage> {
             borderRadius: BorderRadius.circular(10 * place.scale),
             onTap: item.onTap,
             child: SizedBox(width: size.width - 2 * gap, height: size.height - 2 * gap, child: Center(child: face)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 바로 클릭 ↔ 트랙패드, as in Chrome Remote Desktop.
+  void _toggleTouchMode() {
+    final next = _pointer.mode == TouchMode.trackpad ? TouchMode.direct : TouchMode.trackpad;
+    setState(() => _pointer.setMode(next));
+    _savePreference('jump.touchMode', next.name);
+    _notice(
+      next == TouchMode.trackpad ? '트랙패드: 끌면 커서 이동, 탭하면 클릭' : '바로 클릭: 누른 곳 클릭, 길게 누른 뒤 끌면 드래그',
+      seconds: 2.5,
+    );
+  }
+
+  /// 한/영: the Mac switches its input source, whatever its own shortcut for that is.
+  void _switchInputSource() {
+    _session.keyTap(Hid.lang1);
+    _notice('Mac 입력 언어 전환');
+  }
+
+  void _setToolbarFolded(bool folded) {
+    setState(() => _toolbarFolded = folded);
+    SharedPreferences.getInstance().then((prefs) => prefs.setBool('jump.toolbarFolded', folded));
+  }
+
+  /// The folded toolbar: 맞춤↔채움 and unfold, in a bottom corner clear of the stick.
+  Widget _toolbarMini(Size size, ViewerLayout layout, bool connected) {
+    const button = 44.0, pad = 4.0;
+    const width = 2 * button + 2 * pad + 2, height = button + 2 * pad;
+    final safe = MediaQuery.paddingOf(context);
+    final top = size.height - safe.bottom - (_keyboardOn ? _keyboardBarHeight : 0) - 8 - height;
+    final right = size.width - safe.right - 8 - width, left = safe.left + 8;
+    final stick = connected && _stickPlacement != 'hidden' ? layout.stick : null;
+    bool hits(double x) => stick != null && Rect.fromLTWH(x, top, width, height).inflate(8).overlaps(stick);
+    Widget mini(IconData icon, String label, bool on, VoidCallback onTap) => Semantics(
+      label: label,
+      button: true,
+      child: Material(
+        color: on ? const Color(0xFF4F8CFF) : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: SizedBox(width: button, height: button, child: Icon(icon, size: 22, color: Colors.white)),
+        ),
+      ),
+    );
+    return Positioned(
+      left: hits(right) ? left : right,
+      top: top,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xC8161A20),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0x33FFFFFF), width: 0.5),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(pad),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              mini(_pointer.fill ? Icons.crop_free : Icons.fit_screen, _pointer.fill ? '맞춤으로' : '채우기', _pointer.fill, _toggleFill),
+              const SizedBox(width: 2),
+              mini(Icons.menu, '도구 막대 펼치기', false, () => _setToolbarFolded(false)),
+            ],
           ),
         ),
       ),

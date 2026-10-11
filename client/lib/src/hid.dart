@@ -10,6 +10,9 @@ abstract final class Hid {
   static const down = 0x70051;
   static const up = 0x70052;
   static const keyV = 0x70019;
+
+  /// LANG1, the 한/영 key: the host switches the Mac's input source on it.
+  static const lang1 = 0x70090;
   static const leftControl = 0x700E0;
   static const leftShift = 0x700E1;
   static const leftAlt = 0x700E2;
