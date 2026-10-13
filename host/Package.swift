@@ -8,9 +8,12 @@ let package = Package(
         .package(url: "https://github.com/stasel/WebRTC.git", exact: "153.0.0"),
     ],
     targets: [
+        // Objective-C: CoreGraphics' private virtual display classes, weakly imported.
+        .target(name: "VirtualDisplayBridge"),
         .executableTarget(
             name: "JumpHost",
             dependencies: [
+                "VirtualDisplayBridge",
                 .product(name: "WebRTC", package: "WebRTC"),
             ],
             swiftSettings: [

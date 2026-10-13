@@ -63,6 +63,9 @@ final class StreamSession: NSObject {
     private var remoteDescriptionSet = false
     private var pendingCandidates: [RTCIceCandidate] = []
     private var stopped = false
+    /// Being ended by the host (the viewer is told first): nothing restarts any more.
+    private var finishing = false
+    private var captureRestarts = 0
     private let cursorTracker = CursorTracker()
     /// Latest cursor shape, re-sent whenever the input channel (re)opens.
     private var cursorImageMessage: [String: Any]?
@@ -151,7 +154,17 @@ final class StreamSession: NSObject {
         videoSource = source
         // The monitor picked last time, if it is still attached.
         let preferred = HostConfig.shared.displayID.flatMap { Displays.isActive($0) ? $0 : nil } ?? CGMainDisplayID()
-        startCapture(displayID: preferred)
+        // A virtual display the size of the viewer's screen when that is turned on; whatever goes
+        // wrong with it, the session starts on the real screen instead.
+        let device = self.device
+        DispatchQueue.main.async { [weak self] in
+            VirtualDisplayManager.shared.prepare(for: device) { virtual in
+                self?.queue.async {
+                    guard let self, !self.stopped else { return }
+                    self.startCapture(displayID: virtual ?? preferred)
+                }
+            }
+        }
     }
 
     /// (Re)starts screen capture on one display, feeding the same video track.
@@ -162,8 +175,11 @@ final class StreamSession: NSObject {
         capturer?.stop()
 
         let capturer = ScreenCapturer(source: source)
-        capturer.onStop = { [weak self] error in
-            self?.queue.async { self?.end(reason: "화면 캡처가 멈췄습니다: \(error?.localizedDescription ?? "알 수 없음")") }
+        capturer.onStop = { [weak self, weak capturer] error in
+            self?.queue.async {
+                guard let self, let capturer else { return }
+                self.captureStopped(capturer, error: error)
+            }
         }
         if let audioChannel {
             // Weak: once the session closes the channel is gone and packets are simply dropped.
@@ -194,12 +210,30 @@ final class StreamSession: NSObject {
         }
     }
 
+    /// The captured display went away or changed under the stream (a monitor unplugged, the lid
+    /// closed, the virtual display removed): carry on with the Mac's main display instead of
+    /// ending the session, a few times at most.
+    private func captureStopped(_ capturer: ScreenCapturer, error: Error?) {
+        guard !stopped, !finishing, self.capturer === capturer else { return }
+        let why = error?.localizedDescription ?? "알 수 없음"
+        guard captureRestarts < 3 else {
+            return end(reason: "화면 캡처가 멈췄습니다: \(why)")
+        }
+        captureRestarts += 1
+        hostLog("[session] capture stopped (\(why)); restarting on the main display (\(captureRestarts)/3)")
+        queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, !self.stopped, !self.finishing, self.capturer === capturer else { return }
+            self.startCapture(displayID: CGMainDisplayID())
+        }
+    }
+
     /// The quality's size cap, lowered to what the viewer's screen can show (with a quarter more for
     /// zooming in): pixels beyond that cost frames and bandwidth and the viewer scales them away.
     private func streamLongEdge(for displayID: CGDirectDisplayID) -> Int? {
         let cap = HostConfig.shared.quality.maxLongEdge
-        guard device.width > 0, device.height > 0 else { return cap }
         let bounds = CGDisplayBounds(displayID)
+        // A display this process hasn't heard about yet reports no size: don't size by it.
+        guard device.width > 0, device.height > 0, bounds.width > 0, bounds.height > 0 else { return cap }
         let aspect = max(bounds.width, bounds.height) / max(min(bounds.width, bounds.height), 1)
         // The Mac fitted onto the viewer's screen in whichever orientation shows it bigger.
         let fitted = min(Double(max(device.width, device.height)), Double(min(device.width, device.height)) * aspect)
@@ -233,6 +267,7 @@ final class StreamSession: NSObject {
     /// Ends the session from the host's side: tells the viewer why on the data channel (it may
     /// have no signaling left), then tears down once that had a moment to go out.
     func finish(bye: [String: Any]?) {
+        finishing = true
         if let bye { reply(bye) }
         queue.asyncAfter(deadline: .now() + 0.25) { self.stop() }
     }

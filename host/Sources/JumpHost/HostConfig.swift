@@ -97,6 +97,13 @@ final class HostConfig {
         set { defaults.set(newValue, forKey: "launchAtLogin") }
     }
 
+    /// While a viewer is connected, put the desktop on a virtual display the size of the viewer's
+    /// screen (see `VirtualDisplayManager`). Off unless turned on in the menu.
+    var virtualDisplay: Bool {
+        get { defaults.object(forKey: "virtualDisplay") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "virtualDisplay") }
+    }
+
     /// Share copied text between the Mac and the client.
     var shareClipboard: Bool {
         get { defaults.object(forKey: "shareClipboard") as? Bool ?? true }

@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var terminationSignal: DispatchSourceSignal?
 
     func applicationWillTerminate(_ notification: Notification) {
+        VirtualDisplayManager.shared.remove()
         SpeakerMute.restore()
     }
 
@@ -151,6 +152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         qualityItem.submenu = qualityMenu
         menu.addItem(qualityItem)
+        let virtualItem = action("접속 기기에 맞춘 가상 화면 (여백 없이, 또렷하게)", #selector(toggleVirtualDisplay))
+        virtualItem.state = HostConfig.shared.virtualDisplay ? .on : .off
+        menu.addItem(virtualItem)
         let hevcItem = action("HEVC 사용 (지원 기기)", #selector(toggleHEVC))
         hevcItem.state = HostConfig.shared.useHEVC ? .on : .off
         menu.addItem(hevcItem)
@@ -280,6 +284,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { return }
         HostConfig.shared.quality = quality
         host.disconnect(reason: "화질 설정이 바뀌어 다시 연결합니다", retry: true)
+    }
+
+    /// Applies from the next session, so the current one reconnects; turned off, the Mac's
+    /// screens go back at once.
+    @objc private func toggleVirtualDisplay() {
+        HostConfig.shared.virtualDisplay.toggle()
+        if !HostConfig.shared.virtualDisplay { VirtualDisplayManager.shared.remove() }
+        host.disconnect(reason: "화면 설정이 바뀌어 다시 연결합니다", retry: true)
     }
 
     @objc private func toggleHEVC() {

@@ -231,6 +231,7 @@ final class HostController {
                 self.state = .idle
                 SpeakerMute.restore()
                 SystemAwake.release()
+                DispatchQueue.main.async { VirtualDisplayManager.shared.sessionEnded() }
             }
         }
         self.session = session
@@ -259,6 +260,7 @@ final class HostController {
         session.finish(bye: reason.map { ["t": "bye", "message": $0, "retry": retry] })
         SpeakerMute.restore()
         SystemAwake.release()
+        DispatchQueue.main.async { VirtualDisplayManager.shared.sessionEnded() }
         state = .idle
     }
 }

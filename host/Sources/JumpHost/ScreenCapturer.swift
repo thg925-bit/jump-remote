@@ -44,15 +44,24 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func start(displayID: CGDirectDisplayID, maxLongEdge: Int?, showsCursor: Bool) async throws -> Started {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        // A display that has just appeared (a virtual one, a monitor plugged in) can take a
+        // moment to show up here: look a few times before settling for another one.
+        var content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        for _ in 0..<5 where !content.displays.contains(where: { $0.displayID == displayID }) {
+            try await Task.sleep(nanoseconds: 200_000_000)
+            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        }
         guard let display = content.displays.first(where: { $0.displayID == displayID }) ?? content.displays.first else {
             throw NSError(domain: "JumpHost", code: 2, userInfo: [NSLocalizedDescriptionKey: "캡처할 디스플레이가 없습니다"])
         }
+        if display.displayID != displayID { hostLog("[capture] display \(displayID) is not there; using \(display.displayID)") }
 
+        let filter = SCContentFilter(display: display, excludingWindows: [])
         let pointSize = CGSize(width: display.width, height: display.height)
-        var pixelWidth = display.width * 2
-        var pixelHeight = display.height * 2
-        if let mode = CGDisplayCopyDisplayMode(display.displayID) {
+        // Pixels per point: the mode says (a virtual display has none to ask), else the filter.
+        var pixelWidth = Int((Float(display.width) * filter.pointPixelScale).rounded())
+        var pixelHeight = Int((Float(display.height) * filter.pointPixelScale).rounded())
+        if let mode = CGDisplayCopyDisplayMode(display.displayID), mode.pixelWidth > 0, mode.pixelHeight > 0 {
             pixelWidth = mode.pixelWidth
             pixelHeight = mode.pixelHeight
         }
@@ -78,7 +87,6 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         config.excludesCurrentProcessAudio = true
         config.captureResolution = .best
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: outputQueue)
         if config.capturesAudio {
