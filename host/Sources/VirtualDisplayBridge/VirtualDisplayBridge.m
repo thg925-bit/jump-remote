@@ -65,6 +65,7 @@ typedef CGError (*ConfigureMode)(CGDisplayConfigRef, CGDirectDisplayID, int);
         && NSClassFromString(@"CGVirtualDisplaySettings") != Nil && NSClassFromString(@"CGVirtualDisplayMode") != Nil;
 }
 
++ (uint32_t)vendorID { return 0x4A50; }
 + (NSUInteger)maxPixelsWide { return 5120; }
 + (NSUInteger)maxPixelsHigh { return 3200; }
 
@@ -79,7 +80,7 @@ typedef CGError (*ConfigureMode)(CGDisplayConfigRef, CGDirectDisplayID, int);
         descriptor.name = name;
         // The same identity every time, so macOS recognises "this monitor" and puts windows
         // back where they were with it.
-        descriptor.vendorID = 0x4A50;
+        descriptor.vendorID = self.vendorID;
         descriptor.productID = 0x0001;
         descriptor.serialNumber = 1;
         descriptor.sizeInMillimeters = CGSizeMake(520, 325);

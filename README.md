@@ -34,7 +34,8 @@ cd host && ./build.sh install
 처음 실행하면 앱 안의 LaunchAgent(`Contents/Library/LaunchAgents`, `SMAppService.agent`)를 등록해
 로그인 시 자동 실행되고, 오류로 죽으면 launchd가 다시 띄운다(메뉴에서 종료한 것은 그대로 둔다). 메뉴 **로그인 시 자동 실행 · 멈추면 다시 켜기**로 끈다.
 아이콘이 노치 뒤에 숨으면 JumpHost를 다시 열면(Spotlight 등) 같은 메뉴가 마우스 위치에 뜬다.
-연결 기록: `~/Library/Logs/JumpHost/host.log` (메뉴 **연결 기록 보기**) — 세션 시작/종료 이유, 재연결 이유, 5초마다 경로·화질.
+연결 기록: `~/Library/Logs/JumpHost/host.log` (메뉴 **연결 기록 보기**) — 세션 시작/종료 이유, 재연결 이유, 5초마다 경로·화질(`[stats]`)과
+브라우저 뷰어가 실제로 재생한 수치(`[viewer]`: 초당 프레임, 프레임 간격 편차, 네트워크 지터, 버퍼, 디코드 시간, 손실).
 다른 사람에게 줄 때는 `host/package.sh` → `dist/JumpHost-<버전>.zip` (앱 + `docs/manual.html`).
 이 zip에는 중개 서버 주소·비밀번호·Mac ID가 들어가지 않는다. 받은 쪽은 zip 안의 `중개 서버 만들기.command`
 (= `relay/setup-relay.command`)로 자기 Cloudflare 계정에 중개 서버를 만든다: Node.js 확인 → wrangler 로그인 →
@@ -50,7 +51,7 @@ cd host && ./build.sh install
 포트: 47865 (WebSocket 신호), 47866 (브라우저 뷰어).
 
 가상 화면 (메뉴 **접속 기기에 맞춘 가상 화면**, 기본 꺼짐): 접속하면 뷰어 화면과 같은 픽셀 크기의 가상 디스플레이를 만들고
-(짧은 변이 700pt 이상 남으면 Retina 2x, 아니면 1x) 물리 디스플레이를 그 미러로 묶어 그 화면을 캡처한다. 여백이 없고 스케일 없이 1:1로 간다.
+(짧은 변이 700pt 이상 남으면 Retina 2x. 그보다 작은 뷰어는 1x가 되는데, 물리 화면이 있으면 그냥 물리 화면을 쓴다: Retina를 줄여 보내는 쪽이 더 또렷하다) 물리 디스플레이를 그 미러로 묶어 그 화면을 캡처한다. 여백이 없고 스케일 없이 1:1로 간다.
 `CGVirtualDisplay`와 창 서버의 모드 목록(`CGSConfigureDisplayMode`)은 비공개 API라 전부 런타임에 확인하고, 실패하면 물리 화면으로 시작한다.
 세션이 끝나도 90초 유지했다가 지우므로 재접속은 즉시 재사용한다. 캡처하던 화면이 사라지면 세션을 끝내지 않고 주 화면으로 캡처를 다시 시작한다(최대 3회).
 

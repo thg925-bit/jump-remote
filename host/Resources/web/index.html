@@ -408,7 +408,9 @@ let relayMode = false;
 const hashId = new URLSearchParams(location.hash.slice(1)).get("id");
 if (hashId) store.set("jump.relayId", hashId.toLowerCase());
 ui.host.value = store.get("jump.host") || location.hostname || "";
-fetch("relay.json", { cache: "no-store" })
+// Settles (never rejects) once it is known whether this page came from the relay; connecting
+// before that would use the wrong kind of address.
+const relayProbe = fetch("relay.json", { cache: "no-store" })
   .then((response) => (response.ok ? response.json() : null))
   .then((info) => {
     if (!info || !info.relay) return;
@@ -747,6 +749,7 @@ class Session {
       // on a jittery network: forcing zero playout delay drew frames the moment they arrived,
       // which on Wi-Fi/LTE turned small delay swings into visible stutter.
       try { event.receiver.jitterBufferTarget = 0; } catch {}
+      this.receiver = event.receiver; // the target follows the link from here on (updateStats)
       ui.video.srcObject = event.streams[0] || new MediaStream([event.track]);
       ui.video.play().catch(() => {});
     };
@@ -833,9 +836,12 @@ class Session {
     if (this.input && this.input.readyState === "open") this.input.send(JSON.stringify(message));
   }
 
+  /** Once a second: measure what this viewer actually plays, let the jitter buffer follow the
+   *  link, tell the Mac every 5 s (for its log), and fill the stats overlay when it is shown. */
   async updateStats() {
-    if (!this.pc || !ui.stats.classList.contains("show")) return;
-    const report = await this.pc.getStats();
+    if (!this.pc || this.closed) return;
+    let report;
+    try { report = await this.pc.getStats(); } catch { return; }
     let video = null, codec = null, pair = null;
     report.forEach((s) => {
       if (s.type === "inbound-rtp" && s.kind === "video") video = s;
@@ -844,17 +850,37 @@ class Session {
     if (video && video.codecId) codec = report.get(video.codecId);
     if (!video) return;
     const now = performance.now();
-    const bytes = video.bytesReceived || 0;
-    const mbps = this.prevBytes != null ? ((bytes - this.prevBytes) * 8) / ((now - this.prevTime) * 1000) : 0;
-    this.prevBytes = bytes; this.prevTime = now;
-    const jitterMs = video.jitterBufferEmittedCount
-      ? (1000 * video.jitterBufferDelay) / video.jitterBufferEmittedCount : 0;
-    const decodeMs = video.framesDecoded ? (1000 * video.totalDecodeTime) / video.framesDecoded : 0;
+    const taken = { t: now, ...Object.fromEntries(PLAYBACK_COUNTERS.map((key) => [key, video[key] || 0])) };
+    const second = playbackBetween(this.lastPlayback, taken);
+    this.lastPlayback = taken;
+    if (!second) return;
+
+    // The buffer target follows the network's jitter: 0 on a steady link (smallest delay).
+    this.smooth = nextBufferTarget(this.smooth || SMOOTH_START, { fps: second.fps, jitterMs: (video.jitter || 0) * 1000 }, now);
+    if (this.receiver && this.smooth.target !== this.appliedTarget) {
+      try { this.receiver.jitterBufferTarget = this.smooth.target; this.appliedTarget = this.smooth.target; } catch {}
+    }
+
+    // What the viewer saw over the last 5 s, for the Mac's log (host.log, "[viewer]").
+    this.reportFrom = this.reportFrom || taken;
+    if (now - this.reportFrom.t >= 5000) {
+      const span = playbackBetween(this.reportFrom, taken);
+      this.reportFrom = taken;
+      if (span) {
+        const round = (value, digits = 1) => (value == null ? null : Number(value.toFixed(digits)));
+        this.sendInput({ t: "stats", fps: round(span.fps, 0), gap: round(span.gapSd), jitter: round((video.jitter || 0) * 1000),
+                         buffer: round(span.bufferMs, 0), target: this.smooth.target, decode: round(span.decodeMs),
+                         dropped: span.dropped, lost: span.lost, nack: span.nack, pli: span.pli });
+      }
+    }
+
+    if (!ui.stats.classList.contains("show")) return;
     ui.stats.textContent = [
-      `${video.frameWidth || "?"}×${video.frameHeight || "?"}  ${Math.round(video.framesPerSecond || 0)} fps`,
-      `${mbps.toFixed(1)} Mbps  ${codec ? codec.mimeType.replace("video/", "") : ""}`,
+      `${video.frameWidth || "?"}×${video.frameHeight || "?"}  ${Math.round(second.fps)} fps`,
+      `${second.mbps.toFixed(1)} Mbps  ${codec ? codec.mimeType.replace("video/", "") : ""}`,
       `RTT ${this.lastRtt != null ? this.lastRtt.toFixed(0) : "?"} ms  ${pathLabel(report, pair)}`,
-      `jitter buf ${jitterMs.toFixed(0)} ms  decode ${decodeMs.toFixed(1)} ms`,
+      `jitter ${((video.jitter || 0) * 1000).toFixed(0)} ms  buf ${second.bufferMs.toFixed(0)} ms (목표 ${this.smooth.target})`,
+      `gap ±${second.gapSd == null ? "?" : second.gapSd.toFixed(1)} ms  decode ${second.decodeMs.toFixed(1)} ms`,
       `dropped ${video.framesDropped || 0}  ${video.decoderImplementation || ""}`,
     ].join("\n");
   }
@@ -885,6 +911,54 @@ class Session {
     try { this.ws && this.ws.close(); } catch {}
     if (!keepPicture) ui.video.srcObject = null;
   }
+}
+
+// ---------- Playback measurement and smoothing ----------
+const PLAYBACK_COUNTERS = ["bytesReceived", "framesDecoded", "totalInterFrameDelay", "totalSquaredInterFrameDelay", "totalDecodeTime",
+  "jitterBufferDelay", "jitterBufferEmittedCount", "framesDropped", "packetsLost", "nackCount", "pliCount"];
+
+/** What was played between two snapshots of the inbound video counters; null for the first. */
+function playbackBetween(from, to) {
+  if (!from || to.t <= from.t) return null;
+  const seconds = (to.t - from.t) / 1000;
+  const d = (key) => Math.max(0, to[key] - from[key]);
+  const frames = d("framesDecoded");
+  // Spread of the time between frames as they were shown: 0 is perfectly even playback.
+  const mean = frames > 1 ? d("totalInterFrameDelay") / frames : 0;
+  const gapSd = frames > 1 ? Math.sqrt(Math.max(0, d("totalSquaredInterFrameDelay") / frames - mean * mean)) * 1000 : null;
+  return {
+    fps: frames / seconds,
+    mbps: (d("bytesReceived") * 8) / seconds / 1e6,
+    gapSd,
+    decodeMs: frames ? (1000 * d("totalDecodeTime")) / frames : 0,
+    bufferMs: d("jitterBufferEmittedCount") ? (1000 * d("jitterBufferDelay")) / d("jitterBufferEmittedCount") : 0,
+    dropped: d("framesDropped"), lost: d("packetsLost"), nack: d("nackCount"), pli: d("pliCount"),
+  };
+}
+
+// The viewer asks for the smallest playback delay. On a link whose packets arrive unevenly that
+// shows as stutter, so the jitter buffer's target follows the measured network jitter: 0 while
+// the link is steady, up to 100 ms on a bad one. It rises at once and comes down slowly (20 ms
+// after 15 calm seconds); a level that had to be raised again right after lowering is kept
+// for two minutes.
+const SMOOTH_START = { target: 0, jitter: 0, calmSince: 0, loweredAt: -1e9, holdUntil: 0 };
+function nextBufferTarget(state, sample, now) {
+  // A still screen sends a frame only now and then: no news about the link.
+  if (!(sample.fps >= 20) || !Number.isFinite(sample.jitterMs)) return state;
+  const next = { ...state, jitter: 0.8 * state.jitter + 0.2 * sample.jitterMs };
+  const wanted = next.jitter < 8 ? 0 : Math.min(100, Math.max(20, Math.round((next.jitter * 2.5) / 10) * 10));
+  if (wanted > next.target) {
+    if (now - next.loweredAt < 20000) next.holdUntil = now + 120000;
+    next.target = wanted;
+    next.calmSince = now;
+  } else if (wanted === next.target) {
+    next.calmSince = now;
+  } else if (now >= next.holdUntil && now - next.calmSince >= 15000) {
+    next.target = Math.max(wanted, next.target - 20);
+    next.calmSince = now;
+    next.loweredAt = now;
+  }
+  return next;
 }
 
 /** "직접 연결" or "TURN 우회" for the candidate pair carrying the media. */
@@ -1005,6 +1079,9 @@ async function checkForUpdate() {
     const last = Number(sessionStorage.getItem("jump.updatedAt") || 0);
     if (Date.now() - last < 60000) return;
     sessionStorage.setItem("jump.updatedAt", String(Date.now()));
+    // Between reconnect attempts (the Mac restarting into this very version, typically) there is
+    // no live session either: reload, but connect again afterwards instead of stopping at the form.
+    if (reconnectNow || reconnectTimer) sessionStorage.setItem("jump.resumeAfterUpdate", "1");
     location.reload();
   } catch {}
 }
@@ -1012,11 +1089,12 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) chec
 window.addEventListener("pageshow", (e) => { if (e.persisted) checkForUpdate(); });
 setTimeout(checkForUpdate, 500);
 setInterval(checkForUpdate, 3 * 60 * 1000);
-// Reloaded by "적용" during a session: connect again right away with the saved details.
+// Reloaded by "적용" or while reconnecting: connect again right away with the saved details,
+// once it is known whether to go through the relay.
 try {
   if (sessionStorage.getItem("jump.resumeAfterUpdate") === "1") {
     sessionStorage.removeItem("jump.resumeAfterUpdate");
-    if (ui.host.value && ui.password.value) setTimeout(() => ui.form.requestSubmit(), 300);
+    relayProbe.then(() => { if (ui.host.value && ui.password.value) ui.form.requestSubmit(); });
   }
 } catch {}
 

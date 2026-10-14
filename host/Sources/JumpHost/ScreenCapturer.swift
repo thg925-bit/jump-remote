@@ -34,6 +34,7 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     // the screen is idle lets the encoder refine a static image to full quality.
     private var lastBuffer: CVPixelBuffer?
     private var lastDelivery: CFTimeInterval = 0
+    private var lastStamp: Int64 = 0
     private var refreshTimer: DispatchSourceTimer?
     private static let idleRefreshInterval: CFTimeInterval = 0.2
 
@@ -43,11 +44,13 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         super.init()
     }
 
-    func start(displayID: CGDirectDisplayID, maxLongEdge: Int?, showsCursor: Bool) async throws -> Started {
-        // A display that has just appeared (a virtual one, a monitor plugged in) can take a
-        // moment to show up here: look a few times before settling for another one.
+    /// `maxLongEdge`: the cap on the streamed frame's longer edge for a display of that size in
+    /// points (asked once the display actually captured is known). `waitForDisplay`: the display
+    /// was made a moment ago and may take a beat to show up.
+    func start(displayID: CGDirectDisplayID, waitForDisplay: Bool, showsCursor: Bool,
+               maxLongEdge: (CGSize) -> Int?) async throws -> Started {
         var content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        for _ in 0..<5 where !content.displays.contains(where: { $0.displayID == displayID }) {
+        for _ in 0..<(waitForDisplay ? 5 : 0) where !content.displays.contains(where: { $0.displayID == displayID }) {
             try await Task.sleep(nanoseconds: 200_000_000)
             content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         }
@@ -65,7 +68,7 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
             pixelWidth = mode.pixelWidth
             pixelHeight = mode.pixelHeight
         }
-        if let maxLongEdge, max(pixelWidth, pixelHeight) > maxLongEdge {
+        if let maxLongEdge = maxLongEdge(pointSize), max(pixelWidth, pixelHeight) > maxLongEdge {
             let scale = Double(maxLongEdge) / Double(max(pixelWidth, pixelHeight))
             pixelWidth = Int(Double(pixelWidth) * scale)
             pixelHeight = Int(Double(pixelHeight) * scale)
@@ -77,7 +80,11 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         let config = SCStreamConfiguration()
         config.width = pixelWidth
         config.height = pixelHeight
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        // A hair under the display's 1/60 s on purpose. At exactly 1/60 ScreenCaptureKit samples a
+        // 60 Hz screen at 57.6 fps: every 0.4 s one screen frame is skipped (measured: 20 skips in
+        // 8 s), which shows as a regular hitch in anything that scrolls. At 1/61 every frame of a
+        // 60 Hz screen comes through, and a 120 Hz screen gives exactly every other one.
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 61)
         config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         config.showsCursor = showsCursor
         config.queueDepth = 5
@@ -125,7 +132,11 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
               SCFrameStatus(rawValue: statusRaw) == .complete,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         else { return }
-        deliver(pixelBuffer)
+        // The moment the frame was on screen, not the moment this callback got to run: frames
+        // are an even 16.7 ms apart by the first and a jittery few ms off by the second, and the
+        // viewer paces playback by these timestamps.
+        let shown = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        deliver(pixelBuffer, at: shown.isNumeric ? Int64(CMTimeGetSeconds(shown) * 1_000_000_000) : nil)
     }
 
     // MARK: SCStreamDelegate
@@ -192,13 +203,18 @@ final class ScreenCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     /// Must run on `outputQueue`.
-    private func deliver(_ pixelBuffer: CVPixelBuffer) {
+    /// `time`: when the frame was shown, in host-clock nanoseconds; nil (an idle re-send) = now.
+    private func deliver(_ pixelBuffer: CVPixelBuffer, at time: Int64? = nil) {
         lastBuffer = pixelBuffer
         lastDelivery = CACurrentMediaTime()
+        // Never backwards: a re-send stamped "now" can be later than the display time of the
+        // real frame that follows it, and WebRTC drops frames that aren't newer than the last.
+        let stamp = max(time ?? Int64(DispatchTime.now().uptimeNanoseconds), lastStamp + 1_000_000)
+        lastStamp = stamp
         let buffer = RTCCVPixelBuffer(pixelBuffer: pixelBuffer)
         let frame = RTCVideoFrame(buffer: buffer,
                                   rotation: ._0,
-                                  timeStampNs: Int64(DispatchTime.now().uptimeNanoseconds))
+                                  timeStampNs: stamp)
         sink.capturer(rtcCapturer, didCapture: frame)
         deliveredFrames += 1
         if deliveredFrames == 1 {

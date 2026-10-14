@@ -11,6 +11,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Whether this macOS still has the classes this relies on.
 @property (class, readonly) BOOL isSupported;
 
+/// The vendor number these displays report (`CGDisplayVendorNumber`), to tell them from real ones.
+@property (class, readonly) uint32_t vendorID;
+
 /// Largest size a display may be given later with `setPixelsWide:…` (fixed when it is created).
 @property (class, readonly) NSUInteger maxPixelsWide;
 @property (class, readonly) NSUInteger maxPixelsHigh;

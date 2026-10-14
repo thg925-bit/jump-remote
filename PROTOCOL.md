@@ -46,6 +46,12 @@ with backoff, for about a minute.
 
 ## Media
 
+The screen is captured at every refresh up to 60 fps (ScreenCaptureKit with a minimum frame
+interval of 1/61 s: at exactly 1/60 a 60 Hz screen is sampled at 57.6 fps and one frame in 25
+is skipped), and frames carry the time they were on screen, not the time they were handed over.
+The web viewer asks for the smallest playback delay and raises its jitter buffer target with the
+measured network jitter (0 below 8 ms, up to 100 ms), lowering it again slowly.
+
 Host sends one video track, hardware encoded: HEVC (VideoToolbox, our own encoder since the
 macOS WebRTC build ships none) when the client reports it can decode it, otherwise H.264.
 
@@ -69,6 +75,7 @@ Client → host. Coordinates `x`,`y` are normalized `0..1` over the video frame.
 | `{"t":"text","s":"안녕"}` | type committed text (soft keyboard / IME / dictation). `"paste":true` (the viewer's compose box) always pastes it, so line breaks stay line breaks instead of pressing Return |
 | `{"t":"ping","ts":123}` | host answers `{"t":"pong","ts":123}` |
 | `{"t":"audio","on":true}` | client is (not) playing the audio channel. While on, the host mutes the Mac's speakers; while off, the Mac plays its own sound |
+| `{"t":"stats","fps":58,"gap":2.1,"jitter":3.0,"buffer":24,"target":0,"decode":3.2,"dropped":0,"lost":0,"nack":0,"pli":0}` | what the viewer played over its last 5 s, for the host's log (`[viewer]` lines): frames per second shown, spread of the time between shown frames (ms), RTP jitter (ms), jitter buffer delay and the target the viewer asked for (ms), decode time per frame (ms), and frames dropped, packets lost, NACKs and PLIs in that time. Sent every 5 s by the web viewer; hosts that don't know it ignore it |
 | `{"t":"clip","text":"…"}` | text copied on the client (at most 60 000 bytes of UTF-8); the host puts it on the Mac pasteboard before handling the next message, so a following Cmd+V pastes it |
 | `{"t":"selectDisplay","id":2}` | show another monitor (an `id` from `displays`); the host remembers it for the next session |
 | `{"t":"password","current":"…","new":"…"}` | change the host password (8–128 characters, no leading/trailing spaces). The current one is still required; wrong guesses count toward the login lockout. Sent only on this channel, which is end-to-end encrypted, never through signaling or the relay |

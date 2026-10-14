@@ -68,6 +68,15 @@ final class VirtualDisplayManager {
             return completion(nil)
         }
 
+        // A viewer too small for Retina would get a plain 1x display, which is no sharper than
+        // the Mac's own Retina screen scaled down for it (and reshuffles the desktop for nothing).
+        // Only worth it when the Mac has no screen of its own: no monitor, or the lid closed.
+        if !want.retina, !Self.physicalDisplays().isEmpty {
+            hostLog("[display] \(device.name) \(device.width)x\(device.height) is not a Retina-size screen: using the Mac's own display")
+            remove()
+            return completion(nil)
+        }
+
         if let display, size == want {
             hostLog("[display] reusing the virtual display \(want.description)")
             return completion(display.displayID)
@@ -104,7 +113,7 @@ final class VirtualDisplayManager {
                 remove()
                 return completion(nil)
             }
-            let physical = Self.physicalDisplays(except: display.displayID)
+            let physical = Self.physicalDisplays()
             guard display.applyModeNumber(mode, mirroring: physical.map { NSNumber(value: $0) }) else {
                 hostLog("[display] could not switch to the virtual display; using the real screen")
                 remove()
@@ -165,11 +174,13 @@ final class VirtualDisplayManager {
         size = nil
     }
 
-    private static func physicalDisplays(except virtual: CGDirectDisplayID) -> [CGDirectDisplayID] {
+    /// The Mac's real screens: every online display that isn't one of ours (told by the vendor
+    /// number the bridge gives them, so a display just removed can't be mistaken for one).
+    private static func physicalDisplays() -> [CGDirectDisplayID] {
         var count: UInt32 = 0
         guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
-        return ids.prefix(Int(count)).filter { $0 != virtual }
+        return ids.prefix(Int(count)).filter { CGDisplayVendorNumber($0) != JumpVirtualDisplay.vendorID }
     }
 }

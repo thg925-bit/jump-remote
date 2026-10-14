@@ -152,8 +152,6 @@ final class StreamSession: NSObject {
                                            maxBitrateBps: NSNumber(value: maxBitrate))
 
         videoSource = source
-        // The monitor picked last time, if it is still attached.
-        let preferred = HostConfig.shared.displayID.flatMap { Displays.isActive($0) ? $0 : nil } ?? CGMainDisplayID()
         // A virtual display the size of the viewer's screen when that is turned on; whatever goes
         // wrong with it, the session starts on the real screen instead.
         let device = self.device
@@ -161,14 +159,20 @@ final class StreamSession: NSObject {
             VirtualDisplayManager.shared.prepare(for: device) { virtual in
                 self?.queue.async {
                     guard let self, !self.stopped else { return }
-                    self.startCapture(displayID: virtual ?? preferred)
+                    if let virtual { return self.startCapture(displayID: virtual, justAppeared: true) }
+                    // The monitor picked last time, if it is still attached. Decided only now:
+                    // getting here may have removed a virtual display that was the main one.
+                    let preferred = HostConfig.shared.displayID.flatMap { Displays.isActive($0) ? $0 : nil } ?? CGMainDisplayID()
+                    self.startCapture(displayID: preferred)
                 }
             }
         }
     }
 
-    /// (Re)starts screen capture on one display, feeding the same video track.
-    private func startCapture(displayID: CGDirectDisplayID) {
+    /// (Re)starts screen capture on one display, feeding the same video track. `justAppeared`: a
+    /// display made a moment ago, worth waiting for briefly; any other display that isn't there
+    /// (unplugged, a virtual one just removed) is replaced by the main one at once.
+    private func startCapture(displayID: CGDirectDisplayID, justAppeared: Bool = false) {
         guard let source = videoSource else { return }
         let firstStart = capturer == nil && self.displayID == nil
         capturer?.onStop = nil
@@ -192,11 +196,13 @@ final class StreamSession: NSObject {
         }
         self.capturer = capturer
 
-        let maxLongEdge = streamLongEdge(for: displayID)
         let showsCursor = !device.drawsCursor
+        let device = self.device
         Task { [weak self] in
             do {
-                let started = try await capturer.start(displayID: displayID, maxLongEdge: maxLongEdge, showsCursor: showsCursor)
+                let started = try await capturer.start(displayID: displayID, waitForDisplay: justAppeared, showsCursor: showsCursor) {
+                    Self.streamLongEdge(for: device, displaySize: $0)
+                }
                 self?.queue.async {
                     guard let self, self.capturer === capturer else { return }
                     self.captureStarted(started, first: firstStart)
@@ -229,10 +235,9 @@ final class StreamSession: NSObject {
 
     /// The quality's size cap, lowered to what the viewer's screen can show (with a quarter more for
     /// zooming in): pixels beyond that cost frames and bandwidth and the viewer scales them away.
-    private func streamLongEdge(for displayID: CGDirectDisplayID) -> Int? {
+    /// `displaySize`: the display actually being captured, in points.
+    private static func streamLongEdge(for device: DeviceInfo, displaySize bounds: CGSize) -> Int? {
         let cap = HostConfig.shared.quality.maxLongEdge
-        let bounds = CGDisplayBounds(displayID)
-        // A display this process hasn't heard about yet reports no size: don't size by it.
         guard device.width > 0, device.height > 0, bounds.width > 0, bounds.height > 0 else { return cap }
         let aspect = max(bounds.width, bounds.height) / max(min(bounds.width, bounds.height), 1)
         // The Mac fitted onto the viewer's screen in whichever orientation shows it bigger.
@@ -600,6 +605,10 @@ extension StreamSession: RTCDataChannelDelegate {
                 guard let self, !self.stopped else { return }
                 self.onEvent?(.clientAudio(on: on))
             }
+        case "stats":
+            // What the viewer actually played over its last 5 s, next to our own [stats] lines:
+            // without it a stutter on the receiving side is invisible from here.
+            hostLog("[viewer] " + Self.describe(viewerStats: message))
         case "clip":
             // In line with the input, so a ⌘V queued behind it already sees it.
             if HostConfig.shared.shareClipboard, let text = message["text"] as? String, !text.isEmpty {
@@ -619,6 +628,16 @@ extension StreamSession: RTCDataChannelDelegate {
         default:
             injector.handle(message)
         }
+    }
+
+    private static func describe(viewerStats message: [String: Any]) -> String {
+        func number(_ key: String, _ format: String = "%.0f") -> String {
+            (message[key] as? NSNumber).map { String(format: format, $0.doubleValue) } ?? "?"
+        }
+        return "\(number("fps")) fps | gap ±\(number("gap", "%.1f")) ms | jitter \(number("jitter", "%.1f")) ms"
+            + " | buffer \(number("buffer")) ms (target \(number("target")))"
+            + " | decode \(number("decode", "%.1f")) ms | dropped \(number("dropped")) lost \(number("lost"))"
+            + " nack \(number("nack")) pli \(number("pli"))"
     }
 
     /// Sends a control message to the client on the input channel (call on `queue`).
