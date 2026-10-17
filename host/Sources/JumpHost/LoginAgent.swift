@@ -1,7 +1,7 @@
 import Foundation
 import ServiceManagement
 
-/// Starts Jump Host at login and again after a crash: a LaunchAgent in ~/Library/LaunchAgents
+/// Starts Wherever Host at login and again after a crash: a LaunchAgent in ~/Library/LaunchAgents
 /// (KeepAlive unless it exits cleanly, so quitting from the menu stays quit).
 ///
 /// A plain agent plist, not SMAppService.agent: without a Team ID macOS ties an SMAppService
@@ -87,11 +87,11 @@ enum LoginAgent {
     }
 
     /// Opened by hand (Finder, Spotlight, after an update) while the agent is on: let launchd
-    /// run Jump Host instead, so a crash later on is restarted too. True when this copy should
+    /// run Wherever Host instead, so a crash later on is restarted too. True when this copy should
     /// quit now: launchd starts the other a second later, and if it didn't after all, this app
     /// reopens the ordinary way.
     static func handOverIfNeeded() -> Bool {
-        guard eligible, !isCurrentProcess, HostConfig.shared.launchAtLogin, isEnabled,
+        guard eligible, !isCurrentProcess, HostConfig.shared.launchAtLogin, isEnabled, startsThisCopy,
               ProcessInfo.processInfo.environment["JUMP_NO_HANDOVER"] == nil
         else { return false }
         // launchd holds back a job that exited less than ThrottleInterval (10 s) ago, e.g. one
@@ -107,6 +107,17 @@ enum LoginAgent {
         do { try process.run() } catch { return false }
         hostLog("[app] opened by hand: handing over to the login agent")
         return true
+    }
+
+    /// The agent runs this very app. Not after the app moved or was renamed (JumpHost.app became
+    /// WhereverHost.app): handing over then would start the old path, so this copy carries on
+    /// and `apply()` points the agent here first.
+    private static var startsThisCopy: Bool {
+        guard let data = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let arguments = plist["ProgramArguments"] as? [String]
+        else { return false }
+        return arguments.first == Bundle.main.executablePath
     }
 
     /// Removing the agent stops the process it started, i.e. this one: start a fresh copy a

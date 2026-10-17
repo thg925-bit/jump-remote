@@ -1,4 +1,4 @@
-# Jump protocol (v1)
+# Wherever protocol (v1)
 
 Host = Mac (`host/`, Swift). Client = iPad / Android (`client/`, Flutter).
 Transport = WebRTC. Signaling = one WebSocket per session.

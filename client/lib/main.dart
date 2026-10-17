@@ -21,7 +21,7 @@ class JumpApp extends StatelessWidget {
       scaffoldBackgroundColor: const Color(0xFF0B0D10),
     );
     return MaterialApp(
-      title: 'Jump',
+      title: 'Wherever',
       debugShowCheckedModeBanner: false,
       theme: theme,
       darkTheme: theme,

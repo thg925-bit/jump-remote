@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Jump</string>
+	<string>Wherever</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>같은 네트워크의 Mac에 접속하려면 필요합니다.</string>
 	<key>NSAppTransportSecurity</key>

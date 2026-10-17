@@ -108,7 +108,7 @@ class _ConnectPageState extends State<ConnectPage> {
               padding: const EdgeInsets.all(20),
               shrinkWrap: true,
               children: [
-                Text('Jump', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text('Wherever', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
                 Text('Mac 원격 제어', style: theme.textTheme.bodyMedium?.copyWith(color: Colors.white60)),
                 const SizedBox(height: 24),
@@ -170,7 +170,7 @@ class _ConnectPageState extends State<ConnectPage> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Mac 메뉴바의 Jump Host 아이콘에서 주소·"어디서나 접속" 링크·비밀번호를 볼 수 있습니다.',
+                  'Mac 메뉴바의 Wherever Host 아이콘에서 주소·"어디서나 접속" 링크·비밀번호를 볼 수 있습니다.',
                   style: theme.textTheme.bodySmall?.copyWith(color: Colors.white54),
                 ),
               ],

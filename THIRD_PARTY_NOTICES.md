@@ -1,6 +1,6 @@
 # Third-party notices
 
-Jump Host (the Mac app) ships the WebRTC framework built by
+Wherever Host (the Mac app) ships the WebRTC framework built by
 [stasel/WebRTC](https://github.com/stasel/WebRTC) from Google's WebRTC sources, under this license:
 
 ```

@@ -14,14 +14,14 @@ enum SystemAwake {
         guard displayAssertion == 0 else { return }
         IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
                                     IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                                    "Jump remote session" as CFString,
+                                    "Wherever remote session" as CFString,
                                     &displayAssertion)
     }
 
     /// Wakes a sleeping display so capture has something to show before the first input.
     /// Call on the host queue when a session starts.
     static func wakeDisplay() {
-        IOPMAssertionDeclareUserActivity("Jump remote session" as CFString, kIOPMUserActiveLocal, &wakeAssertion)
+        IOPMAssertionDeclareUserActivity("Wherever remote session" as CFString, kIOPMUserActiveLocal, &wakeAssertion)
     }
 
     /// Call on the host queue when the session ends.
@@ -37,6 +37,6 @@ enum SystemAwake {
         let now = CACurrentMediaTime()
         guard now - lastActivity > 5 else { return }
         lastActivity = now
-        IOPMAssertionDeclareUserActivity("Jump remote input" as CFString, kIOPMUserActiveLocal, &activityAssertion)
+        IOPMAssertionDeclareUserActivity("Wherever remote input" as CFString, kIOPMUserActiveLocal, &activityAssertion)
     }
 }

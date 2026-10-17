@@ -12,7 +12,7 @@ final class ClipboardSync {
     private var timer: Timer?
     private var lastChangeCount = 0
 
-    /// Pasteboard changes Jump made itself (client text, typing through paste): not echoed back.
+    /// Pasteboard changes the host made itself (client text, typing through paste): not echoed back.
     private static let lock = NSLock()
     private static var ownChanges: [Int] = []
 

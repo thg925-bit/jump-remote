@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds build/JumpHost.app (menu bar host). `./build.sh install` also installs to ~/Applications.
+# Builds build/WhereverHost.app (menu bar host). `./build.sh install` also installs to ~/Applications.
 # A stable signing identity lets macOS keep the Screen Recording / Accessibility grants
 # across rebuilds; ad-hoc signatures change every build and lose them.
 set -euo pipefail
@@ -9,7 +9,7 @@ CONFIG="${CONFIG:-release}"
 swift build -c "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)"
 
-APP="build/JumpHost.app"
+APP="build/WhereverHost.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
 cp "$BIN/JumpHost" "$APP/Contents/MacOS/"
@@ -49,8 +49,9 @@ echo "Built $APP"
 if [ "${1:-}" = "install" ]; then
   pkill -x JumpHost 2>/dev/null || true
   mkdir -p "$HOME/Applications"
-  rm -rf "$HOME/Applications/JumpHost.app"
-  ditto "$APP" "$HOME/Applications/JumpHost.app"
-  open "$HOME/Applications/JumpHost.app"
-  echo "Installed and launched ~/Applications/JumpHost.app"
+  # JumpHost.app: the same app under its earlier name.
+  rm -rf "$HOME/Applications/JumpHost.app" "$HOME/Applications/WhereverHost.app"
+  ditto "$APP" "$HOME/Applications/WhereverHost.app"
+  open "$HOME/Applications/WhereverHost.app"
+  echo "Installed and launched ~/Applications/WhereverHost.app"
 fi

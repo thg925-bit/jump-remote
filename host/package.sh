@@ -1,18 +1,18 @@
 #!/bin/bash
-# Builds a copy of Jump Host to give to someone else: dist/JumpHost-<version>.zip holding the
+# Builds a copy of Wherever Host to give to someone else: dist/WhereverHost-<version>.zip holding the
 # app and the manual. It carries no relay, password, Mac ID or other settings of this Mac;
 # the other Mac makes its own, and reaches it from outside with Tailscale or its own relay.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 env -u RELAY_URL ./build.sh
-VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/JumpHost.app/Contents/Info.plist)"
-NAME="JumpHost-$VERSION"
+VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/WhereverHost.app/Contents/Info.plist)"
+NAME="WhereverHost-$VERSION"
 DIST="../dist"
 mkdir -p "$DIST"
 rm -rf "${DIST:?}/$NAME" "$DIST/$NAME.zip"
 mkdir "$DIST/$NAME"
-ditto build/JumpHost.app "$DIST/$NAME/JumpHost.app"
+ditto build/WhereverHost.app "$DIST/$NAME/WhereverHost.app"
 [ -f ../docs/manual.html ] && cp ../docs/manual.html "$DIST/$NAME/사용 설명서.html"
 cp ../THIRD_PARTY_NOTICES.md "$DIST/$NAME/"
 

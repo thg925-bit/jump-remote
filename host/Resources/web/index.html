@@ -6,11 +6,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Jump">
+<meta name="apple-mobile-web-app-title" content="Wherever">
 <meta name="theme-color" content="#0b0d10">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
-<title>Jump Viewer</title>
+<title>Wherever</title>
 <style>
   :root {
     --bg: #0b0d10;
@@ -197,7 +197,7 @@
 
 <div id="connect">
   <form id="form" autocomplete="on">
-    <h1>Jump Viewer</h1>
+    <h1>Wherever</h1>
     <label><span id="hostLabel">Mac 주소</span> <input id="host" name="host" inputmode="url" autocapitalize="off" spellcheck="false" required></label>
     <label>비밀번호 <span class="pw"><input id="password" name="password" type="password" autocapitalize="off" spellcheck="false" required><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span></label>
     <label class="check"><input id="remember" type="checkbox"> 이 기기에 비밀번호 기억</label>
@@ -987,7 +987,7 @@ function deviceName() {
 }
 
 // ---------- Auto-reconnect ----------
-// A dropped link (network switch, the phone locking, the Mac restarting Jump) reconnects by
+// A dropped link (network switch, the phone locking, the Mac restarting the host) reconnects by
 // itself with the same address and password, keeping the viewer and the last frame up.
 const RECONNECT_DELAYS = [0, 1, 2, 3, 5, 5, 10, 10, 15, 20]; // seconds, about 70 s in all
 let reconnectTimer = null;

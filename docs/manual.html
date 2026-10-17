@@ -1,6 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Jump 사용 설명서</title>
+<title>Wherever 사용 설명서</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
@@ -95,7 +95,7 @@
   .note b { color: var(--warn); }
   .tip { border-radius: 12px; padding: 12px 16px; background: var(--accent-soft); }
 
-  /* Menu bar mock-up: what the Jump Host menu actually shows */
+  /* Menu bar mock-up: what the Wherever Host menu actually shows */
   .menu-wrap { display: grid; gap: 8px; justify-items: start; }
   .menubar { display: flex; align-items: center; gap: 14px; padding: 4px 12px; border-radius: 8px; background: var(--surface);
     border: 1px solid var(--line); font-size: 13px; color: var(--muted); }
@@ -145,8 +145,8 @@
 
 <div class="page">
   <header>
-    <div class="eyebrow">Jump Host · Mac 원격 제어</div>
-    <h1>Jump 사용 설명서</h1>
+    <div class="eyebrow">Wherever Host · Mac 원격 제어</div>
+    <h1>Wherever 사용 설명서</h1>
     <p class="lede">집에 있는 Mac(예: Mac Studio)을 밖에서 MacBook, 아이폰, 아이패드, 안드로이드 폰으로 조작하는 앱입니다. Mac에 한 번 설치해 두면, 다른 기기에서는 주소를 열고 비밀번호만 넣으면 됩니다. 복사·붙여넣기가 기기 사이에 오가고, 모니터가 여러 대면 골라 볼 수 있고, 연결이 잠깐 끊겨도 알아서 다시 붙습니다.</p>
   </header>
 
@@ -164,7 +164,7 @@
   <section id="how">
     <h2>어떻게 연결되나요</h2>
     <div class="flow" role="img" aria-label="Mac이 내 중개 서버에 연결해 두고, 접속 기기는 링크로 찾아와 Mac과 직접 연결됩니다">
-      <div class="node"><b>집의 Mac</b><span>Jump Host 실행<br>메뉴바 아이콘</span></div>
+      <div class="node"><b>집의 Mac</b><span>Wherever Host 실행<br>메뉴바 아이콘</span></div>
       <div class="arrow">항상 대기</div>
       <div class="node"><b>내 중개 서버</b><span>Cloudflare 무료 계정<br>서로 찾아 주기만 함</span></div>
       <div class="arrow">링크 + 비밀번호</div>
@@ -175,24 +175,24 @@
 
   <section id="install">
     <h2>Mac에 설치 <span class="tag">처음 한 번</span></h2>
-    <p class="muted">준비: Apple 칩(M1 이상) Mac, macOS 14 Sonoma 이상. 받은 <code>JumpHost-버전.zip</code> 파일.</p>
+    <p class="muted">준비: Apple 칩(M1 이상) Mac, macOS 14 Sonoma 이상. 받은 <code>WhereverHost-버전.zip</code> 파일.</p>
     <ol class="steps">
       <li><div class="step">
         <b>압축을 풀고 응용 프로그램 폴더로 옮기기</b>
-        <p>zip을 더블클릭하면 폴더가 생깁니다. 안의 <b>JumpHost</b>를 Finder 왼쪽의 <b>응용 프로그램</b>으로 끌어다 놓으세요.</p>
+        <p>zip을 더블클릭하면 폴더가 생깁니다. 안의 <b>WhereverHost</b>를 Finder 왼쪽의 <b>응용 프로그램</b>으로 끌어다 놓으세요.</p>
       </div></li>
       <li><div class="step">
         <b>처음 열기 (한 번만 허용)</b>
         <p>App Store 앱이 아니라서 처음에는 "열 수 없음" 창이 뜹니다. <b>완료</b>를 누른 뒤 아래 순서로 허용하세요.</p>
         <ul>
           <li><b>시스템 설정 → 개인정보 보호 및 보안</b>에서 맨 아래까지 내립니다.</li>
-          <li>"JumpHost이(가) 차단되었습니다" 옆의 <b>그래도 열기</b>를 누르고, Mac 암호를 입력합니다.</li>
+          <li>"WhereverHost이(가) 차단되었습니다" 옆의 <b>그래도 열기</b>를 누르고, Mac 암호를 입력합니다.</li>
         </ul>
-        <p class="caption">이 버튼이 안 보이면 터미널에서 <code>xattr -dr com.apple.quarantine /Applications/JumpHost.app</code>을 실행한 뒤 다시 여세요.</p>
+        <p class="caption">이 버튼이 안 보이면 터미널에서 <code>xattr -dr com.apple.quarantine /Applications/WhereverHost.app</code>을 실행한 뒤 다시 여세요.</p>
       </div></li>
       <li><div class="step">
         <b>권한 두 개 켜기</b>
-        <p>처음 실행하면 권한을 요청합니다. <b>시스템 설정 → 개인정보 보호 및 보안</b>에서 아래 두 곳의 JumpHost를 켜세요.</p>
+        <p>처음 실행하면 권한을 요청합니다. <b>시스템 설정 → 개인정보 보호 및 보안</b>에서 아래 두 곳의 WhereverHost를 켜세요.</p>
         <ul>
           <li><b>화면 및 시스템 오디오 녹음</b>: 화면과 소리를 보냅니다. 켠 뒤 "종료 후 다시 열기"가 뜨면 누르세요.</li>
           <li><b>손쉬운 사용</b>: 마우스와 키보드를 조작합니다.</li>
@@ -203,7 +203,7 @@
         <p>화면 맨 위 오른쪽에 <b>모니터 모양 아이콘</b>이 생깁니다. 누르면 아래 메뉴가 나옵니다. 권한 두 줄에 <b>허용됨 ✓</b>이 보이면 집 안에서는 바로 쓸 수 있습니다.</p>
         <div class="menu-wrap">
           <div class="menubar" aria-hidden="true"><span>🔋</span><span>Wi‑Fi</span><span class="me">🖥</span><span>9:41</span></div>
-          <div class="menu" aria-label="Jump Host 메뉴 예시">
+          <div class="menu" aria-label="Wherever Host 메뉴 예시">
             <div>● 대기 중</div>
             <div class="sep"></div>
             <div class="dim">접속 주소 — 브라우저에서 열기, 클릭하면 복사</div>
@@ -233,16 +233,16 @@
           </div>
           <p class="caption">예시 화면입니다. 주소와 비밀번호는 Mac마다 다릅니다. "어디서나 접속" 링크는 다음 단계에서 중개 서버를 만들면 생깁니다. 그 전에는 "꺼짐"으로 보입니다.</p>
         </div>
-        <p class="caption">아이콘이 안 보이면 카메라 노치 뒤에 숨은 것입니다. <kbd>⌘</kbd> <kbd>Space</kbd>로 Spotlight를 열고 <code>JumpHost</code>를 실행하면 같은 메뉴가 마우스 위치에 뜹니다.</p>
+        <p class="caption">아이콘이 안 보이면 카메라 노치 뒤에 숨은 것입니다. <kbd>⌘</kbd> <kbd>Space</kbd>로 Spotlight를 열고 <code>WhereverHost</code>를 실행하면 같은 메뉴가 마우스 위치에 뜹니다.</p>
       </div></li>
       <li><div class="step">
         <b>꺼지지 않게 설정</b>
         <ul>
-          <li>메뉴의 <b>로그인 시 자동 실행 · 멈추면 다시 켜기</b>는 처음부터 켜져 있습니다. Mac을 재시동하거나 Jump가 오류로 멈춰도 알아서 다시 켜집니다. 처음 한 번 "백그라운드 항목이 추가됨" 알림이 뜰 수 있습니다. 메뉴에 "허용이 필요합니다"가 보이면 눌러서 JumpHost를 켜 주세요.</li>
+          <li>메뉴의 <b>로그인 시 자동 실행 · 멈추면 다시 켜기</b>는 처음부터 켜져 있습니다. Mac을 재시동하거나 Wherever가 오류로 멈춰도 알아서 다시 켜집니다. 처음 한 번 "백그라운드 항목이 추가됨" 알림이 뜰 수 있습니다. 메뉴에 "허용이 필요합니다"가 보이면 눌러서 WhereverHost를 켜 주세요.</li>
           <li><b>시스템 설정 → 에너지</b>(노트북은 배터리 → 옵션)에서 <b>디스플레이가 꺼졌을 때 자동 잠자기 방지</b>를 켜세요. Mac이 잠자기에 들어가면 밖에서 접속할 수 없습니다.</li>
           <li>Mac Studio라면 같은 화면의 <b>정전 후 자동으로 시동</b>도 켜 두면 좋습니다.</li>
         </ul>
-        <p>모니터 화면은 꺼져도 괜찮습니다. 접속하면 Jump가 화면을 깨웁니다.</p>
+        <p>모니터 화면은 꺼져도 괜찮습니다. 접속하면 Wherever가 화면을 깨웁니다.</p>
       </div></li>
     </ol>
     <div class="note"><b>주의</b> · Mac Studio에 모니터가 아예 연결되어 있지 않으면 보낼 화면이 없습니다. 모니터를 연결해 두거나(대기 상태 괜찮음), 모니터 없이 쓰려면 HDMI 더미 플러그를 꽂아 두세요. 재시동 직후 FileVault 잠금 화면은 원격으로 풀 수 없으니, 정전이나 업데이트 후에는 집에서 한 번 로그인해야 합니다.</div>
@@ -250,7 +250,7 @@
 
   <section id="outside">
     <h2>밖에서 접속 준비 <span class="tag">중개 서버 · 처음 한 번, 10분</span></h2>
-    <p>집 밖에서 접속하려면 내 Cloudflare 무료 계정에 작은 중개 서버를 하나 만듭니다. zip 안의 <b>중개 서버 만들기</b> 폴더에 있는 스크립트가 알아서 만들고 Jump에 연결해 줍니다. 만들어진 중개 서버는 <b>이 Mac만</b> 쓸 수 있게 잠깁니다.</p>
+    <p>집 밖에서 접속하려면 내 Cloudflare 무료 계정에 작은 중개 서버를 하나 만듭니다. zip 안의 <b>중개 서버 만들기</b> 폴더에 있는 스크립트가 알아서 만들고 Wherever에 연결해 줍니다. 만들어진 중개 서버는 <b>이 Mac만</b> 쓸 수 있게 잠깁니다.</p>
     <ol class="steps">
       <li><div class="step">
         <b>Node.js 설치</b>
@@ -262,7 +262,7 @@
       </div></li>
       <li><div class="step">
         <b>스크립트 실행</b>
-        <p>Jump Host가 켜진 상태에서 <b>중개 서버 만들기</b> 폴더의 <code>중개 서버 만들기.command</code>를 더블클릭합니다. 터미널 창이 열리고 순서대로 진행됩니다.</p>
+        <p>Wherever Host가 켜진 상태에서 <b>중개 서버 만들기</b> 폴더의 <code>중개 서버 만들기.command</code>를 더블클릭합니다. 터미널 창이 열리고 순서대로 진행됩니다.</p>
         <ul>
           <li>처음에 "열 수 없음"이 뜨면 앱 때와 같이 <b>개인정보 보호 및 보안 → 그래도 열기</b>를 누르세요. 또는 터미널에 <code>bash </code>(뒤에 한 칸)를 치고 파일을 끌어다 놓은 뒤 Enter를 눌러도 됩니다.</li>
           <li>브라우저가 열리면 Cloudflare 로그인 후 <b>Allow</b>를 누릅니다.</li>
@@ -271,7 +271,7 @@
       </div></li>
       <li><div class="step">
         <b>링크 확인</b>
-        <p>"✓ 완료"와 함께 <code>https://jump-relay.내이름.workers.dev/#id=…</code> 링크가 나오고 클립보드에 복사됩니다. Jump 메뉴에도 <b>어디서나 접속 (중개 서버 연결됨)</b>과 이 링크가 생깁니다. 접속할 기기로 보내 두세요.</p>
+        <p>"✓ 완료"와 함께 <code>https://jump-relay.내이름.workers.dev/#id=…</code> 링크가 나오고 클립보드에 복사됩니다. Wherever 메뉴에도 <b>어디서나 접속 (중개 서버 연결됨)</b>과 이 링크가 생깁니다. 접속할 기기로 보내 두세요.</p>
       </div></li>
     </ol>
     <p class="caption">무료 플랜으로 충분합니다. 영상은 중개 서버를 거치지 않고 기기끼리 직접 오갑니다.</p>
@@ -279,7 +279,7 @@
 
   <section id="connect">
     <h2>접속하기</h2>
-    <p>Jump 메뉴의 <b>어디서나 접속</b> 링크와 비밀번호만 있으면 어디서든 접속할 수 있습니다. 집 Wi‑Fi에서는 메뉴의 접속 주소(<code>http://192.168…:47866</code>)도 됩니다.</p>
+    <p>Wherever 메뉴의 <b>어디서나 접속</b> 링크와 비밀번호만 있으면 어디서든 접속할 수 있습니다. 집 Wi‑Fi에서는 메뉴의 접속 주소(<code>http://192.168…:47866</code>)도 됩니다.</p>
     <div class="devices">
       <div class="device">
         <span class="best">MacBook · PC 추천: Chrome</span>
@@ -299,7 +299,7 @@
         <ol>
           <li>Safari에서 주소를 엽니다.</li>
           <li>공유 버튼 → <b>홈 화면에 추가</b>를 누릅니다.</li>
-          <li>홈 화면의 <b>Jump</b> 아이콘으로 열면 주소창 없이 전체 화면으로 쓸 수 있습니다.</li>
+          <li>홈 화면의 <b>Wherever</b> 아이콘으로 열면 주소창 없이 전체 화면으로 쓸 수 있습니다.</li>
         </ol>
         <p class="caption">새 버전이 나오면 다음에 열 때 자동으로 바뀝니다.</p>
       </div>
@@ -307,7 +307,7 @@
         <span class="best">앱 또는 Chrome</span>
         <h3>안드로이드</h3>
         <ol>
-          <li>받은 <code>Jump-버전-android.apk</code>를 설치합니다. "출처를 알 수 없는 앱" 허용이 필요합니다.</li>
+          <li>받은 <code>wherever-android-버전.apk</code>를 설치합니다. "출처를 알 수 없는 앱" 허용이 필요합니다.</li>
           <li>앱의 <b>Mac 주소 또는 링크</b> 칸에 "어디서나 접속" 링크를 붙여 넣고 비밀번호를 넣습니다.</li>
         </ol>
         <p class="caption">앱 없이 Chrome에서 주소를 열어도 됩니다. 앱에는 화면 회전 고정 기능이 더 있습니다.</p>
@@ -422,7 +422,7 @@
     <details>
       <summary>접속이 안 돼요 ("Mac에 연결할 수 없습니다" 등)</summary>
       <div><ul>
-        <li>"Mac이 꺼져 있거나 인터넷에 연결돼 있지 않습니다"가 뜨면 Mac이 잠자기 상태이거나 JumpHost가 꺼져 있습니다. 집에서 메뉴의 "어디서나 접속"이 <b>연결됨</b>인지 확인하세요.</li>
+        <li>"Mac이 꺼져 있거나 인터넷에 연결돼 있지 않습니다"가 뜨면 Mac이 잠자기 상태이거나 WhereverHost가 꺼져 있습니다. 집에서 메뉴의 "어디서나 접속"이 <b>연결됨</b>인지 확인하세요.</li>
         <li>설치 5단계의 잠자기 방지와 <b>로그인 시 자동 실행</b>을 켜 두면 다시 생기지 않습니다.</li>
         <li>링크 끝의 <code>#id=…</code>가 잘리지 않았는지 확인하세요.</li>
         <li>Mac 메뉴에 <b>"등록 정보가 중개 서버와 다릅니다"</b>나 <b>"중개 서버가 이 Mac을 받지 않습니다"</b>가 보이면(설정을 지웠거나 다시 설치한 경우) <code>중개 서버 만들기.command</code>를 한 번 더 실행하세요. 이 Mac을 다시 등록합니다.</li>
@@ -437,14 +437,14 @@
       <summary>중개 서버 만들기 스크립트가 멈추거나 실패해요</summary>
       <div><ul>
         <li>"Node.js가 필요합니다": 열린 페이지에서 LTS 설치 후 다시 실행하세요.</li>
-        <li>"Jump Host를 먼저 한 번 실행하세요": 메뉴바 아이콘이 생긴 뒤 다시 실행하세요.</li>
+        <li>"Wherever Host를 먼저 한 번 실행하세요": 메뉴바 아이콘이 생긴 뒤 다시 실행하세요.</li>
         <li>로그인에서 멈추면 브라우저에서 <code>dash.cloudflare.com</code>에 로그인한 뒤 다시 실행하세요. 여러 번 실행해도 괜찮습니다.</li>
       </ul></div>
     </details>
     <details>
       <summary>화면이 검게 나오거나 "화면을 캡처할 수 없습니다"</summary>
       <div><ul>
-        <li>메뉴에서 <b>화면 기록 권한</b>이 허용됨인지 보세요. 켜져 있는데도 안 되면 목록에서 JumpHost를 − 로 지우고 + 로 다시 추가한 뒤 앱을 다시 여세요.</li>
+        <li>메뉴에서 <b>화면 기록 권한</b>이 허용됨인지 보세요. 켜져 있는데도 안 되면 목록에서 WhereverHost를 − 로 지우고 + 로 다시 추가한 뒤 앱을 다시 여세요.</li>
         <li>모니터가 연결되어 있는지 확인하세요 (설치 섹션의 주의 참고).</li>
       </ul></div>
     </details>
@@ -478,8 +478,8 @@
     <h2>업데이트</h2>
     <ol class="steps">
       <li><div class="step"><p>Mac 메뉴에서 <b>종료</b>를 누릅니다.</p></div></li>
-      <li><div class="step"><p>새 zip을 풀고 JumpHost를 <b>응용 프로그램</b>에 덮어씁니다(대치).</p></div></li>
-      <li><div class="step"><p>JumpHost를 다시 엽니다. 권한과 비밀번호, 링크는 그대로 유지됩니다. 메뉴 아래쪽에서 버전을 확인할 수 있습니다.</p></div></li>
+      <li><div class="step"><p>새 zip을 풀고 WhereverHost를 <b>응용 프로그램</b>에 덮어씁니다(대치). 예전 이름 <b>JumpHost</b>로 설치돼 있으면 그건 휴지통으로 옮기세요.</p></div></li>
+      <li><div class="step"><p>WhereverHost를 다시 엽니다. 권한과 비밀번호, 링크는 그대로 유지됩니다. 메뉴 아래쪽에서 버전을 확인할 수 있습니다.</p></div></li>
       <li><div class="step"><p>새 zip의 <code>중개 서버 만들기.command</code>도 한 번 더 실행합니다. 접속 화면이 새 버전으로 바뀝니다(이미 로그인되어 있어 1분이면 끝납니다).</p></div></li>
     </ol>
     <p class="muted">아이폰·아이패드·브라우저 쪽은 자동으로 새 버전이 적용됩니다. 안드로이드 앱은 새 APK를 덮어서 설치하세요.</p>
@@ -498,5 +498,5 @@
     </ul>
   </section>
 
-  <footer>Jump Host 0.8.11 기준. 궁금한 점은 앱을 준 사람에게 물어보세요.</footer>
+  <footer>Wherever Host 0.8.12 기준. 궁금한 점은 앱을 준 사람에게 물어보세요.</footer>
 </div>

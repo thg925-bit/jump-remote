@@ -1,4 +1,4 @@
-// Jump relay: serves the browser viewer and brokers signaling between a Mac host and its
+// Wherever relay: serves the browser viewer and brokers signaling between a Mac host and its
 // viewers when they can't reach each other directly (no Tailscale, no port forwarding).
 //
 // The Mac connects out to /host and stays connected; viewers connect to /client. One Durable

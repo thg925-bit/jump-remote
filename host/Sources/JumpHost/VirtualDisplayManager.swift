@@ -26,8 +26,9 @@ final class VirtualDisplayManager {
     }
 
     /// How long the display outlives a session: reconnects (a network blip, another device taking
-    /// over, a setting changed) reuse it instead of reshuffling the Mac's screens again.
-    private static let keepAfterSession: TimeInterval = 90
+    /// over, a setting changed) reuse it instead of reshuffling the Mac's screens again. Short, so
+    /// the Mac's own screen comes back soon after the viewer leaves.
+    private static let keepAfterSession: TimeInterval = 30
     /// Longest wait for macOS to bring the display up before giving up on it.
     private static let timeout: TimeInterval = 2.5
 

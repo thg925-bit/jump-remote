@@ -1,7 +1,7 @@
 #!/bin/bash
-# Jump 중개 서버 만들기: deploys this relay to your own Cloudflare account (free plan), keeps it
-# to this Mac only, and points this Mac's Jump Host at it. Double-click in Finder, or run it in
-# Terminal. Safe to run again (after updating Jump, for example): it just deploys again.
+# Wherever 중개 서버 만들기: deploys this relay to your own Cloudflare account (free plan), keeps it
+# to this Mac only, and points this Mac's Wherever Host at it. Double-click in Finder, or run it in
+# Terminal. Safe to run again (after updating the app, for example): it just deploys again.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -12,7 +12,7 @@ fail() {
   exit 1
 }
 
-say "Jump 중개 서버 만들기"
+say "Wherever 중개 서버 만들기"
 
 # Node.js runs Cloudflare's deploy tool (wrangler).
 if ! command -v npx >/dev/null 2>&1; then
@@ -25,21 +25,23 @@ if [ "$node_major" -lt 22 ]; then
   fail "Node.js $node_major 버전은 오래됐습니다. 방금 열린 페이지에서 최신 LTS를 설치한 뒤 다시 실행하세요."
 fi
 
-# Jump Host creates this Mac's ID on its first launch.
+# Wherever Host creates this Mac's ID on its first launch.
 mac_id=$(defaults read com.jihun.jumphost macID 2>/dev/null || true)
-[ -n "$mac_id" ] || fail "Jump Host를 먼저 한 번 실행하세요. 메뉴바에 아이콘이 생기면 됩니다."
+[ -n "$mac_id" ] || fail "Wherever Host를 먼저 한 번 실행하세요. 메뉴바에 아이콘이 생기면 됩니다."
 
 # In a shared copy the viewer page comes from the installed app, so the relay serves the same
 # version as the Mac. (In the source tree wrangler.jsonc points at host/Resources/web instead.)
 if grep -q '"./web"' wrangler.jsonc; then
   rm -rf web
-  for app in "/Applications/JumpHost.app" "$HOME/Applications/JumpHost.app"; do
+  # JumpHost.app: the same app under its earlier name.
+  for app in "/Applications/WhereverHost.app" "$HOME/Applications/WhereverHost.app" \
+             "/Applications/JumpHost.app" "$HOME/Applications/JumpHost.app"; do
     if [ -d "$app/Contents/Resources/web" ]; then
       cp -R "$app/Contents/Resources/web" web
       break
     fi
   done
-  [ -d web ] || fail "JumpHost.app을 찾지 못했습니다. 응용 프로그램 폴더에 넣은 뒤 다시 실행하세요."
+  [ -d web ] || fail "WhereverHost.app을 찾지 못했습니다. 응용 프로그램 폴더에 넣은 뒤 다시 실행하세요."
 fi
 
 say "1/4 도구 준비 (처음에는 1~2분 걸립니다)"
@@ -69,7 +71,7 @@ mkdir -p "$(dirname "$ids_file")"
 known=$(cat "$ids_file" 2>/dev/null || true)
 echo
 echo "이 Cloudflare 계정의 중개 서버를 다른 Mac도 같이 쓰나요?"
-echo "그렇다면 그 Mac의 ID를 넣으세요 (Jump 메뉴 링크의 #id= 뒤, 여러 대는 쉼표로). 없으면 그냥 Enter."
+echo "그렇다면 그 Mac의 ID를 넣으세요 (Wherever 메뉴 링크의 #id= 뒤, 여러 대는 쉼표로). 없으면 그냥 Enter."
 [ -n "$known" ] && echo "(지난번 목록: $known)"
 read -r -p "다른 Mac ID: " extra || extra=""
 ids=$(printf '%s,%s,%s' "$mac_id" "$known" "$extra" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '\n' | grep -E '^[a-z0-9]{8,32}$' | awk '!seen[$0]++' | paste -sd, -)
@@ -79,13 +81,13 @@ printf '%s' "$ids" > "$ids_file"
 # claim its ID once more; the relay uses this value up on the Mac's next connection.
 printf '%s:%s' "$mac_id" "$(date +%s)" | npx wrangler secret put HOST_RESET >/dev/null || true
 
-say "4/4 Jump Host 연결"
+say "4/4 Wherever Host 연결"
 defaults write com.jihun.jumphost relayURL "$url"
 if pgrep -x JumpHost >/dev/null; then
   killall JumpHost || true
   sleep 2
 fi
-open -a JumpHost 2>/dev/null || true
+open -a WhereverHost 2>/dev/null || open -a JumpHost 2>/dev/null || true
 
 link="$url/#id=$mac_id"
 printf '%s' "$link" | pbcopy
@@ -94,6 +96,6 @@ echo "이 Mac의 '어디서나 접속' 링크 (클립보드에 복사됨):"
 echo
 echo "    $link"
 echo
-echo "Jump 메뉴에서도 볼 수 있습니다. 링크와 비밀번호만 있으면 어디서든 접속됩니다."
+echo "Wherever 메뉴에서도 볼 수 있습니다. 링크와 비밀번호만 있으면 어디서든 접속됩니다."
 echo
 read -r -p "Enter를 누르면 닫힙니다" _ || true

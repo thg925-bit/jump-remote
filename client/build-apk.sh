@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the Android APK to hand out: ../dist/jump-android-<version>.apk (arm64).
+# Builds the Android APK to hand out: ../dist/wherever-android-<version>.apk (arm64).
 #
 # Flutter writes the absolute path of the generated plugin registrant into libapp.so
 # (file:///Users/<name>/…/.dart_tool/flutter_build/dart_plugin_registrant.dart), so a build made
@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 
 VERSION="$(sed -n 's/^version: \([0-9.]*\)+.*/\1/p' pubspec.yaml)"
 WORK="${JUMP_BUILD_DIR:-/Users/Shared/jump-build}/client"
-OUT="$(cd .. && pwd)/dist/jump-android-$VERSION.apk"
+OUT="$(cd .. && pwd)/dist/wherever-android-$VERSION.apk"
 
 mkdir -p "$WORK" "$(dirname "$OUT")"
 rsync -a --delete --exclude build --exclude .dart_tool --exclude .gradle --exclude '.idea' ./ "$WORK/"

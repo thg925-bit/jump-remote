@@ -59,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Already running (e.g. opened by hand while the login agent had started it): leave
             // that copy alone. A clean exit, so the agent doesn't start this one over and over.
             if (error as NSError).code == Int(EADDRINUSE), !others.isEmpty {
-                hostLog("[app] another Jump Host is already running; quitting this copy")
+                hostLog("[app] another Wherever Host is already running; quitting this copy")
                 others.first?.activate()
                 exit(0)
             }
@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateIcon()
 
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        hostLog("[app] Jump Host \(version) started\(LoginAgent.isCurrentProcess ? " by the login agent" : "")"
+        hostLog("[app] Wherever Host \(version) started\(LoginAgent.isCurrentProcess ? " by the login agent" : "")"
                 + " — screen recording \(Permissions.screenRecording ? "ok" : "MISSING"),"
                 + " accessibility \(Permissions.accessibility ? "ok" : "MISSING")")
         _ = HostConfig.shared.password  // create one on first launch so the menu and clients agree
@@ -230,7 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         field.stringValue = HostConfig.shared.relayURL?.absoluteString ?? ""
         let alert = NSAlert()
         alert.messageText = "중개 서버 주소"
-        alert.informativeText = "직접 배포한 Jump 중개 서버 주소를 넣으세요. 비우면 끕니다."
+        alert.informativeText = "직접 배포한 Wherever 중개 서버 주소를 넣으세요. 비우면 끕니다."
         alert.accessoryView = field
         alert.addButton(withTitle: "저장")
         alert.addButton(withTitle: "취소")
@@ -268,7 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let error = LoginAgent.apply() {
             let alert = NSAlert()
             alert.messageText = "자동 실행 설정을 바꾸지 못했습니다"
-            alert.informativeText = "시스템 설정 → 일반 → 로그인 항목에서 JumpHost를 직접 추가하세요.\n(\(error.localizedDescription))"
+            alert.informativeText = "시스템 설정 → 일반 → 로그인 항목에서 WhereverHost를 직접 추가하세요.\n(\(error.localizedDescription))"
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }
@@ -327,7 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .connecting: symbol = "display.and.arrow.down"
         case .connected: symbol = "dot.radiowaves.left.and.right"
         }
-        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Jump Host")
+        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Wherever Host")
     }
 
     private func label(_ title: String) -> NSMenuItem {
