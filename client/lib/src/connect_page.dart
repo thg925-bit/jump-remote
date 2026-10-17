@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'hosts_store.dart';
 import 'session.dart';
 import 'viewer_page.dart';
+import 'app_version.dart';
 
 class ConnectPage extends StatefulWidget {
   const ConnectPage({super.key});
@@ -55,6 +57,9 @@ class _ConnectPageState extends State<ConnectPage> {
       viewportPixels: media.size * media.devicePixelRatio,
       devicePixelRatio: media.devicePixelRatio,
     );
+    // Before the first frame, so the Mac starts small on a metered link (the viewer's 📶 tile).
+    session.saver = (await SharedPreferences.getInstance()).getBool('jump.saver') ?? false;
+    if (!mounted) return;
 
     var remembered = false;
     void rememberOnConnect() {
@@ -173,6 +178,14 @@ class _ConnectPageState extends State<ConnectPage> {
                   'Mac 메뉴바의 Wherever Host 아이콘에서 주소·"어디서나 접속" 링크·비밀번호를 볼 수 있습니다.',
                   style: theme.textTheme.bodySmall?.copyWith(color: Colors.white54),
                 ),
+                if (appVersionLabel.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  Text(
+                    appVersionLabel,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(color: Colors.white38),
+                  ),
+                ],
               ],
             ),
           ),

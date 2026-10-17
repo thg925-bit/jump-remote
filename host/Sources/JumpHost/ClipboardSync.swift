@@ -5,6 +5,8 @@ import AppKit
 final class ClipboardSync {
     /// Text copied on the Mac, at most `maxBytes` of UTF-8. Called on the main thread.
     var onCopy: ((String) -> Void)?
+    /// Files copied on the Mac (⌘C in the Finder). Called on the main thread.
+    var onCopyFiles: (([URL]) -> Void)?
 
     /// Keeps each message well under what every browser's data channel accepts.
     static let maxBytes = 60_000
@@ -61,9 +63,14 @@ final class ClipboardSync {
         let changeCount = pasteboard.changeCount
         guard changeCount != lastChangeCount else { return }
         lastChangeCount = changeCount
-        guard !Self.isOwnChange(changeCount),
-              let text = pasteboard.string(forType: .string), !text.isEmpty
-        else { return }
+        guard !Self.isOwnChange(changeCount) else { return }
+        // A copied file comes with its name as text: the file is what was meant.
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            onCopyFiles?(urls)
+            return
+        }
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
         guard text.utf8.count <= Self.maxBytes else {
             hostLog("[clipboard] copied text too large to share (\(text.utf8.count) bytes)")
             return

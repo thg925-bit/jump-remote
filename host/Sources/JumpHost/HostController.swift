@@ -121,8 +121,15 @@ final class HostController {
             }
             self.strikes[source] = nil
             authenticated = true
-            self.startSession(on: connection, device: DeviceInfo(message["device"]))
             self.pendingConnections[id] = nil
+            let device = DeviceInfo(message["device"])
+            // The viewer of the running session, back on a new socket after its network changed:
+            // the same session goes on with an ICE restart instead of starting over.
+            if let token = message["resume"] as? String, let session = self.session, session.canResume(token) {
+                session.resume(on: connection)
+                return
+            }
+            self.startSession(on: connection, device: device)
         }
         connection.onClose = { [weak self, weak connection] in
             guard let self else { return }

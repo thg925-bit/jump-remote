@@ -17,6 +17,7 @@ import 'session.dart';
 import 'settings_dialog.dart';
 import 'trackpad_stick.dart';
 import 'viewer_layout.dart';
+import 'files.dart';
 
 /// Full-screen remote view. Pops with an error message (or null) when the session ends.
 class ViewerPage extends StatefulWidget {
@@ -52,6 +53,8 @@ class _ViewerPageState extends State<ViewerPage> {
 
   /// Leaving the app mid-gesture must not leave the mouse button down on the Mac.
   late final AppLifecycleListener _lifecycle;
+  late final FileTransfer _files;
+  bool _sharedChecked = false; // files from the share sheet go once the session is up
 
   /// The toolbar folded away to two small corner buttons.
   bool _toolbarFolded = false;
@@ -129,7 +132,19 @@ class _ViewerPageState extends State<ViewerPage> {
     _compose.addListener(() {
       if (mounted) setState(() {}); // 전송 enables with text
     });
-    _lifecycle = AppLifecycleListener(onInactive: _pointer.cancelGesture, onHide: _pointer.cancelGesture);
+    _lifecycle = AppLifecycleListener(
+      onInactive: _pointer.cancelGesture,
+      onHide: _pointer.cancelGesture,
+      onResume: _session.resumeLinkIfNeeded, // a link that dropped while away is picked up now
+    );
+    _files = FileTransfer(
+      channel: () => _session.fileChannel,
+      sendInput: _session.sendInput,
+      notice: (text, {double seconds = 1.5}) => _notice(text, seconds: seconds),
+      onOffer: _showFileOffer,
+    );
+    _session.onFileMessage = _files.onChannelMessage;
+    _session.onFileControl = _files.onInput;
     WakelockPlus.enable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     SharedPreferences.getInstance().then((prefs) {
@@ -186,6 +201,7 @@ class _ViewerPageState extends State<ViewerPage> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _applyRotation('system');
     _lifecycle.dispose();
+    _files.reset();
     _pointer.cancelGesture();
     _keyFocus.dispose();
     _textFocus.dispose();
@@ -204,6 +220,13 @@ class _ViewerPageState extends State<ViewerPage> {
     if (_session.phase == SessionPhase.closed) {
       _leave(_session.error);
       return;
+    }
+    if (_session.phase == SessionPhase.connected && !_sharedChecked) {
+      // "Wherever로 보내기" from another app: those files go to the Mac now.
+      _sharedChecked = true;
+      FileBridge.shared().then((shared) {
+        if (mounted && shared.isNotEmpty) _files.send(shared);
+      }).catchError((_) {});
     }
     if (_session.phase == SessionPhase.connected && !_warnedShortPassword && _session.password.length < 8) {
       _warnedShortPassword = true;
@@ -484,6 +507,8 @@ class _ViewerPageState extends State<ViewerPage> {
         _pointer.fill,
         _toggleFill,
       ),
+      _ToolItem(Icons.data_saver_on, _session.saver ? '절약 중' : '데이터\n절약', _session.saver, _toggleSaver),
+      _ToolItem(Icons.attach_file, '파일', false, _pickAndSendFiles),
       _ToolItem(Icons.translate, '한/영', false, _switchInputSource),
       _ToolItem(Icons.keyboard, '키보드', _keyboardOn, _toggleKeyboard),
       // Names where sound comes out; the host mutes the Mac while we play.
@@ -692,6 +717,41 @@ class _ViewerPageState extends State<ViewerPage> {
   void _switchInputSource() {
     _session.keyTap(Hid.lang1);
     _notice('Mac 입력 언어 전환');
+  }
+
+  /// 📎: files picked here go to the Mac's Downloads folder.
+  Future<void> _pickAndSendFiles() async {
+    List<PickedFile> picked;
+    try {
+      picked = await FileBridge.pick();
+    } catch (e) {
+      _notice('파일을 고르지 못했습니다: $e', seconds: 3);
+      return;
+    }
+    if (picked.isNotEmpty) await _files.send(picked);
+  }
+
+  /// The Mac copied files (⌘C in the Finder): offer to fetch them into Downloads.
+  void _showFileOffer(FileOffer offer) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Mac에서 복사한 파일: ${offer.label} (${formatBytes(offer.totalSize)})'),
+          duration: const Duration(seconds: 15),
+          behavior: SnackBarBehavior.floating,
+          width: 360,
+          action: SnackBarAction(label: '받기', onPressed: () => _files.get(offer)),
+        ),
+      );
+  }
+
+  /// Data saver: the Mac sends at most 1600 px, 30 fps and 1.5 Mbps. Remembered for next time.
+  void _toggleSaver() {
+    final on = !_session.saver;
+    setState(() => _session.setSaver(on));
+    SharedPreferences.getInstance().then((prefs) => prefs.setBool('jump.saver', on));
+    _notice(on ? '데이터 절약 켬: 최대 1600px · 30fps · 1.5Mbps' : '데이터 절약 끔', seconds: 2.5);
   }
 
   void _setToolbarFolded(bool folded) {

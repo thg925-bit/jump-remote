@@ -21,6 +21,8 @@ The password never travels on the wire; only an HMAC of a fresh nonce does.
 mime types). The host prefers HEVC when `video/H265` is listed, else H.264.
 `device.cursor: true` means the client draws the cursor itself: the host leaves it out of the video
 and streams its position and shape on the input channel instead.
+`device.saver: true` asks for the data saver from the first frame: at most 1600 px on the long edge,
+30 fps and 1.5 Mbps, whatever the host's quality setting (the `saver` input message switches it later).
 One session at a time: a newly authenticated client replaces the old one.
 Wrong passwords are counted per source (the client's IP; through the relay, the IP the relay
 saw): 5 within a minute lock that source for a minute, doubling per further lockout up to an
@@ -33,6 +35,16 @@ Signaling only sets a session up. Once WebRTC is connected, either side may lose
 (a phone backgrounding the page, a mobile network, the relay) and the session goes on; it ends
 when the viewer closes the input channel, WebRTC fails, or the host says `bye` (below).
 `device.reconnect` (optional) is the reason an automatic reconnect is happening, for the host's log.
+
+Picking a session up (ICE restart): the offer carries `"resume":"<token>"`. A client whose link
+dropped or whose network changed (Wi-Fi ↔ LTE, a new cell, back from the background) opens a new
+signaling socket, authenticates as usual and adds `"resume":"<token>"` at the top level of `auth`.
+When the token is the running session's, the host restarts ICE on that session and sends
+`{"type":"offer","sdp":"...","restart":true,"resume":"<token>"}`, which the client applies to its
+existing peer connection (new answer and candidates on the new socket); capture, the channels and the
+picture carry on. Any other token, or no session, starts a new session as usual, and the client then
+builds a new peer connection for the plain offer. The client gives the restart about 8–10 s before
+falling back to a full reconnect.
 
 `{"type":"error","message":"...","retry":true}`: the session ended for a reason that a new session
 fixes (a host setting changed, or the relay lost the Mac for a moment); the client reconnects by
@@ -55,6 +67,22 @@ measured network jitter (0 below 8 ms, up to 100 ms), lowering it again slowly.
 Host sends one video track, hardware encoded: HEVC (VideoToolbox, our own encoder since the
 macOS WebRTC build ships none) when the client reports it can decode it, otherwise H.264.
 
+## Files (WebRTC data channel `file`, ordered + reliable)
+
+Both ways, apart from the input channel so a big file never holds a click back. A file is a text
+message `{"t":"file","id":N,"name":"a.png","size":12345}`, then its bytes in binary messages of up to
+16 KiB in order, then `{"t":"end","id":N}`; `{"t":"abort","id":N}` drops one half sent. The sender
+paces itself by the channel's buffered amount (about 1 MiB). One file at a time each way.
+
+- Viewer → Mac: the file lands in the Mac's Downloads folder (a name already there gets " (2)"),
+  and the host answers on the input channel with `{"t":"fileSaved","id":N,"name":"a (2).png"}` or
+  `{"t":"fileError","id":N,"message":"..."}`.
+- Mac → viewer: a file copied on the Mac (⌘C in the Finder, while clipboard sharing is on) is
+  offered on the input channel: `{"t":"fileOffer","id":M,"files":[{"name":"a.png","size":12345}]}`
+  (up to 10 files, each up to 4 GB). The viewer asks for them with `{"t":"fileGet","id":M}` and the
+  host sends them one after another on the file channel, each `file` message carrying `"index"` and
+  `"count"`; `{"t":"fileCancel","id":M}` stops that. A newer copy replaces the offer.
+
 ## Audio channel (WebRTC data channel `audio`, unordered, no retransmits, binary)
 
 Host → client, only when "소리 전송" is on. Each message is raw PCM: 48 kHz, 2 channels,
@@ -76,6 +104,7 @@ Client → host. Coordinates `x`,`y` are normalized `0..1` over the video frame.
 | `{"t":"ping","ts":123}` | host answers `{"t":"pong","ts":123}` |
 | `{"t":"audio","on":true}` | client is (not) playing the audio channel. While on, the host mutes the Mac's speakers; while off, the Mac plays its own sound |
 | `{"t":"stats","fps":58,"gap":2.1,"jitter":3.0,"buffer":24,"target":0,"decode":3.2,"dropped":0,"lost":0,"nack":0,"pli":0}` | what the viewer played over its last 5 s, for the host's log (`[viewer]` lines): frames per second shown, spread of the time between shown frames (ms), RTP jitter (ms), jitter buffer delay and the target the viewer asked for (ms), decode time per frame (ms), and frames dropped, packets lost, NACKs and PLIs in that time. Sent every 5 s by the web viewer; hosts that don't know it ignore it |
+| `{"t":"saver","on":true}` | data saver on/off for this session: the host caps the stream at 1600 px, 30 fps and 1.5 Mbps (off: the quality setting), keeps the resolution under that cap (frames go first) and restarts capture at the new size |
 | `{"t":"clip","text":"…"}` | text copied on the client (at most 60 000 bytes of UTF-8); the host puts it on the Mac pasteboard before handling the next message, so a following Cmd+V pastes it |
 | `{"t":"selectDisplay","id":2}` | show another monitor (an `id` from `displays`); the host remembers it for the next session |
 | `{"t":"password","current":"…","new":"…"}` | change the host password (8–128 characters, no leading/trailing spaces). The current one is still required; wrong guesses count toward the login lockout. Sent only on this channel, which is end-to-end encrypted, never through signaling or the relay |

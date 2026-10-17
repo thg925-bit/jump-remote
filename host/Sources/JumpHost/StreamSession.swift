@@ -13,6 +13,9 @@ struct DeviceInfo {
     let codecs: [String]
     /// Why the client is connecting again, when it is an automatic reconnect (for the log).
     let reconnect: String?
+    /// Data saver from the start (`{"saver":true}` in the device info): a smaller, slower, leaner
+    /// stream for a metered link. Switched during the session with the `saver` input message.
+    let saver: Bool
     var receivesHEVC: Bool { codecs.contains { $0.uppercased() == "VIDEO/H265" } }
 
     init(_ raw: Any?) {
@@ -24,6 +27,7 @@ struct DeviceInfo {
         drawsCursor = (dict["cursor"] as? Bool) ?? false
         codecs = (dict["codecs"] as? [String]) ?? []
         reconnect = dict["reconnect"] as? String
+        saver = (dict["saver"] as? Bool) ?? false
     }
 }
 
@@ -46,9 +50,19 @@ final class StreamSession: NSObject {
                                         decoderFactory: RTCDefaultVideoDecoderFactory())
     }()
 
-    let signaling: SignalingChannel
+    /// Where offers, answers and candidates travel. Replaced when the viewer comes back on a new
+    /// socket to restart ICE (`resume(on:)`).
+    private(set) var signaling: SignalingChannel
     let device: DeviceInfo
     var onEvent: ((Event) -> Void)?
+    /// Lets the viewer pick this session up again after its network changed (a new socket, the
+    /// password proved again, this token): ICE restarts and the picture carries on instead of a
+    /// new session from scratch. Sent to the viewer with the offer.
+    let resumeToken: String = {
+        var bytes = [UInt8](repeating: 0, count: 24)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return Data(bytes).base64EncodedString()
+    }()
 
     private let queue: DispatchQueue
     private let injector = InputInjector()
@@ -59,6 +73,8 @@ final class StreamSession: NSObject {
     private let clipboard = ClipboardSync()
     private var inputChannel: RTCDataChannel?
     private var audioChannel: RTCDataChannel?
+    private var fileChannel: RTCDataChannel?
+    private let files: FileTransfer
     private var displayMessage: [String: Any]?
     private var remoteDescriptionSet = false
     private var pendingCandidates: [RTCIceCandidate] = []
@@ -78,6 +94,14 @@ final class StreamSession: NSObject {
     private var sessionBytes: Double = 0
     private var sessionTurnBytes: Double = 0
     private var startedAt = Date()
+    private var everConnected = false
+    private var restartingSince: CFTimeInterval?
+    private var videoSender: RTCRtpSender?
+    /// Data saver: a metered link (LTE) gets at most this, whatever the quality setting says.
+    private var saver: Bool
+    static let saverMaxLongEdge = 1600
+    static let saverMaxBitrateBps = 1_500_000
+    static let saverMaxFramerate = 30
 
     private let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
 
@@ -85,6 +109,8 @@ final class StreamSession: NSObject {
         self.signaling = signaling
         self.device = device
         self.queue = queue
+        self.saver = device.saver
+        self.files = FileTransfer(deviceName: device.name)
         super.init()
     }
 
@@ -115,9 +141,9 @@ final class StreamSession: NSObject {
         encoding.isActive = true
         // JUMP_MAX_KBPS caps the bitrate like a slow connection would (for testing).
         let maxBitrate = ProcessInfo.processInfo.environment["JUMP_MAX_KBPS"].flatMap(Int.init).map { $0 * 1000 }
-            ?? quality.maxBitrateBps
+            ?? (saver ? Self.saverMaxBitrateBps : quality.maxBitrateBps)
         encoding.maxBitrateBps = NSNumber(value: maxBitrate)
-        encoding.maxFramerate = 60
+        encoding.maxFramerate = NSNumber(value: saver ? Self.saverMaxFramerate : 60)
         encoding.networkPriority = .high
         let transceiverInit = RTCRtpTransceiverInit()
         transceiverInit.direction = .sendOnly
@@ -126,15 +152,23 @@ final class StreamSession: NSObject {
         if let transceiver = peerConnection.addTransceiver(with: track, init: transceiverInit) {
             preferCodecs(transceiver, hevc: HostConfig.shared.useHEVC && device.receivesHEVC)
             let parameters = transceiver.sender.parameters
-            // Under congestion keep the frame rate and lower the resolution (smooth over sharp).
-            parameters.degradationPreference = NSNumber(value: RTCDegradationPreference.maintainFramerate.rawValue)
+            parameters.degradationPreference = NSNumber(value: Self.degradation(saver: saver).rawValue)
             transceiver.sender.parameters = parameters
+            videoSender = transceiver.sender
         }
 
         let channelConfig = RTCDataChannelConfiguration()
         channelConfig.isOrdered = true
         inputChannel = peerConnection.dataChannel(forLabel: "input", configuration: channelConfig)
         inputChannel?.delegate = self
+
+        // Files both ways, apart from the input so a big one never holds a click back.
+        let fileConfig = RTCDataChannelConfiguration()
+        fileConfig.isOrdered = true
+        fileChannel = peerConnection.dataChannel(forLabel: "file", configuration: fileConfig)
+        fileChannel?.delegate = self
+        files.channel = fileChannel
+        files.reply = { [weak self] message in self?.reply(message) }
 
         if HostConfig.shared.sendAudio {
             // Late audio is useless: no ordering, no retransmits.
@@ -147,9 +181,9 @@ final class StreamSession: NSObject {
         // Start near a usable bitrate instead of WebRTC's conservative default ramp, and keep a
         // 2 Mbps floor: one Wi-Fi latency spike otherwise drops the estimate to ~1 Mbps and it
         // takes ~15 s to climb back, which reads as a long run of smeared, stuttering frames.
-        peerConnection.setBweMinBitrateBps(NSNumber(value: min(2_000_000, maxBitrate)),
-                                           currentBitrateBps: NSNumber(value: min(8_000_000, maxBitrate)),
-                                           maxBitrateBps: NSNumber(value: maxBitrate))
+        applyBitrateBounds(maxBitrate)
+        HEVCEncoder.holdsResolution = saver
+        if saver { hostLog("[session] data saver on from the start") }
 
         videoSource = source
         // A virtual display the size of the viewer's screen when that is turned on; whatever goes
@@ -198,10 +232,11 @@ final class StreamSession: NSObject {
 
         let showsCursor = !device.drawsCursor
         let device = self.device
+        let saver = self.saver
         Task { [weak self] in
             do {
                 let started = try await capturer.start(displayID: displayID, waitForDisplay: justAppeared, showsCursor: showsCursor) {
-                    Self.streamLongEdge(for: device, displaySize: $0)
+                    Self.streamLongEdge(for: device, saver: saver, displaySize: $0)
                 }
                 self?.queue.async {
                     guard let self, self.capturer === capturer else { return }
@@ -236,16 +271,53 @@ final class StreamSession: NSObject {
     /// The quality's size cap, lowered to what the viewer's screen can show (with a quarter more for
     /// zooming in): pixels beyond that cost frames and bandwidth and the viewer scales them away.
     /// `displaySize`: the display actually being captured, in points.
-    private static func streamLongEdge(for device: DeviceInfo, displaySize bounds: CGSize) -> Int? {
-        let cap = HostConfig.shared.quality.maxLongEdge
+    private static func streamLongEdge(for device: DeviceInfo, saver: Bool, displaySize bounds: CGSize) -> Int? {
+        let cap = [HostConfig.shared.quality.maxLongEdge, saver ? saverMaxLongEdge : nil].compactMap { $0 }.min()
         guard device.width > 0, device.height > 0, bounds.width > 0, bounds.height > 0 else { return cap }
         let aspect = max(bounds.width, bounds.height) / max(min(bounds.width, bounds.height), 1)
         // The Mac fitted onto the viewer's screen in whichever orientation shows it bigger.
         let fitted = min(Double(max(device.width, device.height)), Double(min(device.width, device.height)) * aspect)
         let wanted = max(1280, Int(fitted * 1.25))
         let edge = cap.map { min($0, wanted) } ?? wanted
-        hostLog("[session] viewer \(device.width)x\(device.height): streaming up to \(edge) px wide")
+        hostLog("[session] viewer \(device.width)x\(device.height): streaming up to \(edge) px wide\(saver ? " (data saver)" : "")")
         return edge
+    }
+
+    /// Start near a usable bitrate instead of WebRTC's conservative default ramp, and keep a
+    /// floor: one Wi-Fi latency spike otherwise drops the estimate to ~1 Mbps and it takes ~15 s
+    /// to climb back, which reads as a long run of smeared, stuttering frames. The data saver
+    /// keeps everything lower.
+    private func applyBitrateBounds(_ maxBitrate: Int) {
+        peerConnection?.setBweMinBitrateBps(NSNumber(value: min(saver ? 500_000 : 2_000_000, maxBitrate)),
+                                            currentBitrateBps: NSNumber(value: min(saver ? 1_000_000 : 8_000_000, maxBitrate)),
+                                            maxBitrateBps: NSNumber(value: maxBitrate))
+    }
+
+    /// Under congestion keep the frame rate and lower the resolution (smooth over sharp). With
+    /// the data saver's low ceiling the other way round: text stays readable, frames go first.
+    private static func degradation(saver: Bool) -> RTCDegradationPreference {
+        saver ? .maintainResolution : .maintainFramerate
+    }
+
+    /// The viewer turned the data saver on or off: fewer pixels, frames and bits from here on.
+    private func setSaver(_ on: Bool) {
+        guard !stopped, on != saver else { return }
+        saver = on
+        let maxBitrate = on ? Self.saverMaxBitrateBps : HostConfig.shared.quality.maxBitrateBps
+        hostLog(on ? "[session] data saver on: ≤\(Self.saverMaxLongEdge) px, \(Self.saverMaxFramerate) fps, \(maxBitrate / 1000) kbps"
+                   : "[session] data saver off")
+        if let sender = videoSender {
+            let parameters = sender.parameters
+            for encoding in parameters.encodings {
+                encoding.maxBitrateBps = NSNumber(value: maxBitrate)
+                encoding.maxFramerate = NSNumber(value: on ? Self.saverMaxFramerate : 60)
+            }
+            parameters.degradationPreference = NSNumber(value: Self.degradation(saver: on).rawValue)
+            sender.parameters = parameters
+        }
+        applyBitrateBounds(maxBitrate)
+        HEVCEncoder.holdsResolution = on
+        if let displayID { startCapture(displayID: displayID) } // same screen, new size cap
     }
 
     /// Client picked another monitor.
@@ -292,6 +364,10 @@ final class StreamSession: NSObject {
         inputChannel = nil
         audioChannel?.close()
         audioChannel = nil
+        files.stop()
+        fileChannel?.delegate = nil
+        fileChannel?.close()
+        fileChannel = nil
         // close() joins WebRTC's threads, so no input message can race releaseAll().
         peerConnection?.close()
         peerConnection = nil
@@ -300,6 +376,25 @@ final class StreamSession: NSObject {
         statsTimer?.cancel()
         statsTimer = nil
         injector.releaseAll()
+    }
+
+    /// True for the token the viewer was given, while the session can still be picked up.
+    func canResume(_ token: String) -> Bool {
+        guard !stopped, !finishing, peerConnection != nil, token.utf8.count == resumeToken.utf8.count else { return false }
+        return Array(token.utf8).elementsEqual(Array(resumeToken.utf8)) // same length: no early exit on a mismatch
+    }
+
+    /// The viewer is back on a new signaling socket (its network changed, the page was away):
+    /// restart ICE on the same peer connection, so the capture, encoder and channels carry on.
+    func resume(on channel: SignalingChannel) {
+        guard let peerConnection, !stopped, !finishing else { return }
+        hostLog("[session] \(device.name) is back from \(channel.remoteDescription): restarting ICE")
+        signaling = channel
+        remoteDescriptionSet = false
+        pendingCandidates.removeAll()
+        restartingSince = CACurrentMediaTime()
+        peerConnection.restartIce()
+        createOffer(restart: true)
     }
 
     func handleSignal(_ message: [String: Any]) {
@@ -318,6 +413,15 @@ final class StreamSession: NSObject {
                     self.remoteDescriptionSet = true
                     self.pendingCandidates.forEach(self.addCandidate)
                     self.pendingCandidates.removeAll()
+                    // A restart on a link that never really broke raises no state change: look
+                    // for ourselves once the checks had a moment.
+                    if self.restartingSince != nil {
+                        self.queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+                            guard let self, let state = self.peerConnection?.iceConnectionState,
+                                  state == .connected || state == .completed else { return }
+                            self.noteLinkBack()
+                        }
+                    }
                 }
             }
         case "candidate":
@@ -336,6 +440,13 @@ final class StreamSession: NSObject {
     }
 
     // MARK: Private (on `queue`)
+
+    /// Logs how long the ICE restart took, once.
+    private func noteLinkBack() {
+        guard let since = restartingSince else { return }
+        restartingSince = nil
+        hostLog(String(format: "[session] link back after the ICE restart (%.1f s)", CACurrentMediaTime() - since))
+    }
 
     private func end(reason: String?) {
         guard !stopped else { return }
@@ -381,6 +492,13 @@ final class StreamSession: NSObject {
                   let data = try? JSONSerialization.data(withJSONObject: ["t": "clip", "text": text])
             else { return }
             channel.sendData(RTCDataBuffer(data: data, isBinary: false))
+        }
+        // Files copied on the Mac (⌘C in the Finder) are offered to the viewer.
+        clipboard.onCopyFiles = { [weak self] urls in
+            self?.queue.async {
+                guard let self, !self.stopped, HostConfig.shared.shareClipboard else { return }
+                self.files.offer(urls)
+            }
         }
         clipboard.start()
     }
@@ -472,7 +590,7 @@ final class StreamSession: NSObject {
         statsTimer = timer
     }
 
-    private func createOffer() {
+    private func createOffer(restart: Bool = false) {
         peerConnection?.offer(for: constraints) { [weak self] sdp, error in
             self?.queue.async {
                 guard let self, !self.stopped else { return }
@@ -486,7 +604,8 @@ final class StreamSession: NSObject {
                             self.end(reason: "offer 적용 실패: \(error.localizedDescription)")
                             return
                         }
-                        var offer: [String: Any] = ["type": "offer", "sdp": sdp.sdp]
+                        var offer: [String: Any] = ["type": "offer", "sdp": sdp.sdp, "resume": self.resumeToken]
+                        if restart { offer["restart"] = true } // same session: apply to the existing peer connection
                         // The viewer gathers with the same STUN/TURN servers (TURN only after auth).
                         if !self.signaling.iceServers.isEmpty { offer["iceServers"] = self.signaling.iceServers }
                         self.signaling.send(offer)
@@ -538,7 +657,10 @@ extension StreamSession: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        guard newState == .connected || newState == .completed else { return }
+        queue.async { [weak self] in self?.noteLinkBack() }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
@@ -560,6 +682,9 @@ extension StreamSession: RTCPeerConnectionDelegate {
             guard let self, !self.stopped else { return }
             switch newState {
             case .connected:
+                self.noteLinkBack()
+                guard !self.everConnected else { return }
+                self.everConnected = true
                 self.onEvent?(.connected)
             case .failed:
                 self.end(reason: "연결이 끊어졌습니다")
@@ -587,14 +712,31 @@ extension StreamSession: RTCDataChannelDelegate {
         }
         guard dataChannel.readyState == .open else { return }
         queue.async { [weak self] in
-            guard let self, let message = self.displayMessage else { return }
+            guard let self, dataChannel === self.inputChannel, let message = self.displayMessage else { return }
             self.send(message, on: dataChannel)
             if let cursorImage = self.cursorImageMessage { self.send(cursorImage, on: dataChannel) }
             if dataChannel === self.inputChannel { self.sendDisplays() }
         }
     }
 
+    func dataChannel(_ dataChannel: RTCDataChannel, didChangeBufferedAmount amount: UInt64) {
+        guard dataChannel.label == "file" else { return }
+        queue.async { [weak self] in self?.files.bufferedAmountChanged(amount) }
+    }
+
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        if dataChannel.label == "file" {
+            let data = buffer.data
+            queue.async { [weak self] in
+                guard let self, !self.stopped else { return }
+                if buffer.isBinary {
+                    self.files.handle(binary: data)
+                } else if let message = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                    self.files.handle(text: message)
+                }
+            }
+            return
+        }
         guard let message = (try? JSONSerialization.jsonObject(with: buffer.data)) as? [String: Any] else { return }
         switch message["t"] as? String {
         case "ping":
@@ -618,6 +760,18 @@ extension StreamSession: RTCDataChannelDelegate {
         case "selectDisplay":
             guard let id = (message["id"] as? NSNumber)?.uint32Value else { return }
             queue.async { [weak self] in self?.switchDisplay(to: CGDirectDisplayID(id)) }
+        case "saver":
+            let on = message["on"] as? Bool ?? true
+            queue.async { [weak self] in self?.setSaver(on) }
+        case "fileGet":
+            let id = (message["id"] as? NSNumber)?.intValue ?? 0
+            queue.async { [weak self] in
+                guard let self, !self.stopped else { return }
+                self.files.send(offerID: id)
+            }
+        case "fileCancel":
+            let id = (message["id"] as? NSNumber)?.intValue ?? 0
+            queue.async { [weak self] in self?.files.cancel(offerID: id) }
         case "password":
             let current = message["current"] as? String ?? ""
             let new = message["new"] as? String ?? ""

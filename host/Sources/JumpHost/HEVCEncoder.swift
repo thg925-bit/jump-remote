@@ -41,6 +41,10 @@ final class HEVCEncoder: NSObject, RTCVideoEncoder {
     private var lowSince: CFTimeInterval?
     private var highSince: CFTimeInterval?
     private var startedAt: CFTimeInterval = 0
+    /// Data saver: the stream is small already and its bitrate ceiling low by choice, so keep
+    /// the full size and let frames go instead (text stays readable). One session at a time,
+    /// so one switch; set by the session.
+    static var holdsResolution = false
 
     // MARK: RTCVideoEncoder
 
@@ -145,6 +149,13 @@ final class HEVCEncoder: NSObject, RTCVideoEncoder {
     /// needs (at once when far below), up one step after 6 s comfortably above the next size's need.
     /// True when the size changed.
     private func updateTier(now: CFTimeInterval) -> Bool {
+        if Self.holdsResolution {
+            lowSince = nil
+            highSince = nil
+            guard tier != 0 else { return false }
+            tier = 0
+            return true
+        }
         let pixels = Double(baseWidth) * Double(baseHeight)
         let factor = max(pixels / (2560.0 * 1664.0), 0.1)
         func needs(_ tier: Int) -> Double { Self.tierNeedsKbps[tier] * factor }

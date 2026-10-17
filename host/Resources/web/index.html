@@ -160,6 +160,7 @@
   #kbar button.key, #kbar button.act { flex: none; font: inherit; font-size: 15px; color: #fff; background: #232932;
     border: 0; border-radius: 8px; padding: 8px 12px; }
   #kbar button.act.primary { background: var(--accent); font-weight: 600; }
+  #kbar button.key.on { background: var(--accent); }
   #kbar button.act:disabled { opacity: .4; }
   #kbarPreview { flex: none; color: var(--text); font-size: 15px; padding: 0 2px; white-space: nowrap; }
   #kbarPreview:empty { display: none; }
@@ -177,6 +178,13 @@
     padding: 7px 14px; font-size: 13px; background: rgba(22,26,32,.92); border: 1px solid var(--line); border-radius: 999px;
     display: none; pointer-events: none; white-space: nowrap; }
   #toast.show { display: block; }
+  #fileOffer { position: absolute; left: 50%; top: max(56px, calc(env(safe-area-inset-top) + 44px)); transform: translateX(-50%);
+    display: none; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 8px 8px 8px 14px; background: #232932;
+    color: #fff; border-radius: 12px; font-size: 14px; z-index: 32; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  #fileOffer.show { display: flex; }
+  #fileOffer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #fileOffer button { flex: none; font: inherit; font-size: 14px; color: #fff; background: var(--accent); border: 0; border-radius: 8px; padding: 6px 12px; }
+  #fileOffer button.plain { background: transparent; color: var(--muted); padding: 6px 8px; }
   #updateBtn { position: fixed; left: 50%; top: max(10px, env(safe-area-inset-top)); transform: translateX(-50%);
     display: none; font: inherit; font-size: 13px; font-weight: 600; color: #fff; background: var(--accent);
     border: 0; border-radius: 999px; padding: 8px 16px; box-shadow: 0 4px 14px rgba(0,0,0,.35); cursor: pointer; }
@@ -224,6 +232,8 @@
     <button id="btnSpeed" class="tile" type="button"><i>🎚</i><span>보통</span></button>
     <button id="btnDisplay" class="tile" type="button" style="display:none"><i>🖥</i><span>모니터</span></button>
     <button id="btnFill" class="tile" type="button"><i>⤢</i><span>맞춤</span></button>
+    <button id="btnSaver" class="tile" type="button" title="데이터 절약: Mac이 최대 1600px · 30fps · 1.5Mbps로만 보냅니다"><i>📶</i><span>절약</span></button>
+    <button id="btnFile" class="tile" type="button" title="파일 보내기: Mac의 다운로드 폴더로 (화면에 끌어다 놓아도 됩니다)"><i>📎</i><span>파일</span></button>
     <button id="btnHanEng" class="tile" type="button" title="Mac 입력 언어 전환 (한국어 ↔ 영어)"><i>한/A</i><span>한/영</span></button>
     <button id="btnKbd" class="tile" type="button"><i>⌨</i><span>키보드</span></button>
     <button id="btnSound" class="tile" type="button"><i>🔊</i><span>재생</span></button>
@@ -238,6 +248,8 @@
   <div id="compose"></div>
   <div id="banner"></div>
   <div id="toast"></div>
+  <div id="fileOffer" role="dialog" aria-label="Mac에서 복사한 파일"><span id="fileOfferText"></span><button id="fileOfferGet" type="button">받기</button><button id="fileOfferClose" class="plain" type="button" aria-label="닫기">✕</button></div>
+  <input id="filePick" type="file" multiple hidden>
   <textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
 </div>
 
@@ -251,6 +263,10 @@
     <span id="kbarPreview"></span>
     <button class="key" type="button" data-key="Escape">esc</button>
     <button class="key" type="button" data-key="Tab">tab</button>
+    <button class="key mod" type="button" data-mod="MetaLeft" aria-pressed="false">⌘</button>
+    <button class="key mod" type="button" data-mod="ControlLeft" aria-pressed="false">⌃</button>
+    <button class="key mod" type="button" data-mod="AltLeft" aria-pressed="false">⌥</button>
+    <button class="key mod" type="button" data-mod="ShiftLeft" aria-pressed="false">⇧</button>
     <button class="key" type="button" data-key="ArrowLeft">←</button>
     <button class="key" type="button" data-key="ArrowUp">↑</button>
     <button class="key" type="button" data-key="ArrowDown">↓</button>
@@ -382,7 +398,9 @@ const ui = {
   viewer: $("viewer"), video: $("screen"), surface: $("surface"), toolbar: $("toolbar"), stats: $("stats"),
   kbd: $("kbd"), compose: $("compose"), banner: $("banner"), kbar: $("kbar"), kbarPreview: $("kbarPreview"),
   composeInput: $("composeInput"), composeSend: $("composeSend"), composeEnter: $("composeEnter"), composeUndo: $("composeUndo"),
-  btnKbd: $("btnKbd"), btnMouse: $("btnMouse"), btnSpeed: $("btnSpeed"), btnFill: $("btnFill"),
+  btnKbd: $("btnKbd"), btnMouse: $("btnMouse"), btnSpeed: $("btnSpeed"), btnFill: $("btnFill"), btnSaver: $("btnSaver"),
+  btnFile: $("btnFile"), filePick: $("filePick"), fileOffer: $("fileOffer"), fileOfferText: $("fileOfferText"),
+  fileOfferGet: $("fileOfferGet"), fileOfferClose: $("fileOfferClose"),
   stage: $("stage"), tpHandle: $("tpHandle"), safeProbe: $("safeProbe"), btnSound: $("btnSound"), btnSettings: $("btnSettings"),
   btnDisplay: $("btnDisplay"), toast: $("toast"), optClip: $("optClip"), optCtrlCmd: $("optCtrlCmd"),
   sheet: $("sheet"), sheetForm: $("sheetForm"), sheetClose: $("sheetClose"), optStats: $("optStats"),
@@ -646,9 +664,42 @@ class Session {
     this.attempt = 0;
     this.final = false;     // the Mac said stop (wrong password, another device took over, …)
     this.displays = null;
+    this.resumeToken = null; // from the Mac's offer: lets this session be picked up after a network change
+    this.linkResume = null;  // { reason, since } while a new socket is asking the Mac to restart ICE
   }
 
   start() {
+    this.openSignaling();
+  }
+
+  /** The link dropped or the network changed: prove the password again on a new socket and ask
+   *  the Mac to restart ICE on this very session, so the picture carries on where it was. When
+   *  the Mac is gone or doesn't answer in time, the usual reconnect takes over. True if started. */
+  resumeLink(reason) {
+    if (this.closed || this.linkResume || !this.resumeToken || !this.pc || this.pc.connectionState === "closed") return false;
+    const old = this.ws;
+    if (old) {
+      old.onmessage = old.onerror = old.onclose = null;
+      try { old.close(); } catch {}
+    }
+    this.linkResume = { reason, since: performance.now() };
+    this.restartAnswered = false;
+    showBanner("연결이 끊겨 이어 붙이는 중…");
+    this.openSignaling();
+    return true;
+  }
+
+  /** The restarted link is up (or was never really down): back to normal. */
+  finishResume() {
+    if (!this.linkResume) return;
+    clearTimeout(this.lossTimer);
+    toast(`연결 이어짐 (${((performance.now() - this.linkResume.since) / 1000).toFixed(1)}초)`);
+    this.linkResume = null;
+    this.restartAnswered = false;
+    showBanner("");
+  }
+
+  openSignaling() {
     const url = relayMode
       ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/client?id=${encodeURIComponent(this.host.toLowerCase())}`
       : `ws://${this.host.includes(":") ? this.host : this.host + ":47865"}/`;
@@ -704,8 +755,10 @@ class Session {
             scale: dpr,
             cursor: true, // we draw the cursor ourselves
             codecs: receivableCodecs(), // lets the host pick HEVC when we can decode it
+            saver, // data saver from the first frame (the 📶 tile switches it later)
             ...(this.resumeReason ? { reconnect: this.resumeReason } : {}), // for the host's log
           },
+          ...(this.linkResume ? { resume: this.resumeToken } : {}), // same session, please: restart ICE
         });
         hostName = message.host || "";
         audio.label();
@@ -713,7 +766,13 @@ class Session {
         break;
       }
       case "offer":
-        await this.answer(message.sdp, message.iceServers || []);
+        if (message.resume) this.resumeToken = message.resume;
+        if (message.restart && this.pc && this.linkResume) {
+          await this.applyRestart(message.sdp);
+        } else {
+          if (this.pc) this.resetPeer(); // the Mac started over instead: take the new session here
+          await this.answer(message.sdp, message.iceServers || []);
+        }
         break;
       case "candidate":
         if (this.pc && message.candidate) {
@@ -731,6 +790,41 @@ class Session {
         this.fail(message.message, !!message.retry);
         break;
     }
+  }
+
+  /** The Mac restarted ICE on the running session: answer on the same peer connection. */
+  async applyRestart(sdp) {
+    const pc = this.pc;
+    try {
+      await pc.setRemoteDescription({ type: "offer", sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      this.send({ type: "answer", sdp: pc.localDescription.sdp });
+      this.restartAnswered = true;
+      // A link that never really broke (the restart was asked for early, on a network change)
+      // raises no "connected" event: look for ourselves once the checks had a moment.
+      setTimeout(() => {
+        if (this.pc === pc && pc.connectionState === "connected" && /^(connected|completed)$/.test(pc.iceConnectionState)) this.finishResume();
+      }, 1500);
+    } catch (err) {
+      console.warn("ICE restart", err);
+      this.fail("연결이 끊어졌습니다.");
+    }
+  }
+
+  /** Drops the peer connection and its channels, keeping the session (and its socket). */
+  resetPeer() {
+    clearTimeout(this.lossTimer);
+    this.timers.forEach(clearInterval);
+    this.timers = [];
+    if (this.input) { this.input.onclose = null; this.input.onmessage = null; }
+    files.reset();
+    try { this.input && this.input.close(); } catch {}
+    try { this.audio && this.audio.close(); } catch {}
+    try { this.fileChannel && this.fileChannel.close(); } catch {}
+    try { this.pc && this.pc.close(); } catch {}
+    this.input = this.audio = this.fileChannel = this.pc = this.receiver = null;
+    this.lastPlayback = this.reportFrom = null;
   }
 
   /** `iceServers` come from the Mac (STUN, plus TURN through the relay) only after auth. */
@@ -755,6 +849,12 @@ class Session {
     };
     pc.ondatachannel = (event) => {
       const channel = event.channel;
+      if (channel.label === "file") {
+        channel.binaryType = "arraybuffer";
+        this.fileChannel = channel;
+        channel.onmessage = (e) => files.onChannelMessage(e.data);
+        return;
+      }
       if (channel.label === "audio") {
         channel.binaryType = "arraybuffer";
         channel.onmessage = (e) => audio.push(e.data);
@@ -768,9 +868,15 @@ class Session {
       if (channel.readyState === "open") audio.report();
       else channel.addEventListener("open", () => audio.report());
     };
+    pc.oniceconnectionstatechange = () => {
+      if (this.restartAnswered && /^(connected|completed)$/.test(pc.iceConnectionState)) this.finishResume();
+    };
     pc.onconnectionstatechange = () => {
-      clearTimeout(this.lossTimer);
-      if (pc.connectionState === "connected") {
+      // The loss timer runs on until the link is back: "connecting" on the way there is not it.
+      const state = pc.connectionState;
+      if (state === "connected") {
+        clearTimeout(this.lossTimer);
+        this.finishResume();
         this.connected = true;
         this.resuming = false;
         this.attempt = 0;
@@ -780,13 +886,21 @@ class Session {
           shortPasswordWarned = true;
           toast("비밀번호가 짧습니다. ⚙ 설정에서 8자 이상으로 바꾸세요", 6000);
         }
-      }
-      if (pc.connectionState === "failed") this.fail("연결이 끊어졌습니다.");
-      // A network switch leaves the link "disconnected" for a long while before it "fails"; start
-      // over sooner, but not on a hiccup it recovers from by itself (a few seconds of loss).
-      // With signaling gone as well, both say the link is dead: go sooner.
-      if (pc.connectionState === "disconnected") {
-        const wait = this.ws ? 8 : 2.5;
+      } else if (state === "failed") {
+        // Dead for good on this path: an ICE restart finds a new one; failing that, start over.
+        clearTimeout(this.lossTimer);
+        if (this.resumeLink("연결이 끊어졌습니다")) {
+          this.lossTimer = setTimeout(() => this.fail("연결이 끊어졌습니다."), 8000);
+        } else {
+          this.fail("연결이 끊어졌습니다.");
+        }
+      } else if (state === "disconnected") {
+        // A network switch leaves the link "disconnected" for a long while before it "fails": ask
+        // the Mac to restart ICE at once (a hiccup that recovers by itself loses nothing by it)
+        // and start over if that doesn't bring it back. With signaling gone and no way to resume,
+        // both say the link is dead: go sooner.
+        clearTimeout(this.lossTimer);
+        const wait = this.resumeLink("연결이 끊어졌습니다") ? 10 : this.ws ? 8 : 2.5;
         this.lossTimer = setTimeout(() => this.fail(`연결이 끊어졌습니다 (${wait}초 동안 응답 없음).`), wait * 1000);
       }
     };
@@ -815,6 +929,7 @@ class Session {
     if (message.t === "cursorImage") setCursorImage(message);
     if (message.t === "pong") this.lastRtt = performance.now() - message.ts;
     if (message.t === "password" && this.passwordReply) this.passwordReply(message);
+    if (message.t === "fileSaved" || message.t === "fileError" || message.t === "fileOffer") files.onInput(message);
   }
 
   /** Asks the host to change its password; resolves to {ok, error?}. */
@@ -905,8 +1020,10 @@ class Session {
     clearTimeout(this.lossTimer);
     if (this.input) this.input.onclose = null;
     this.timers.forEach(clearInterval);
+    files.reset();
     try { this.input && this.input.close(); } catch {}
     try { this.audio && this.audio.close(); } catch {}
+    try { this.fileChannel && this.fileChannel.close(); } catch {}
     try { this.pc && this.pc.close(); } catch {}
     try { this.ws && this.ws.close(); } catch {}
     if (!keepPicture) ui.video.srcObject = null;
@@ -984,6 +1101,26 @@ function deviceName() {
   if (/Macintosh/.test(ua)) return "Mac (Web)";
   if (/Windows/.test(ua)) return "PC (Web)";
   return "Browser";
+}
+
+// The network changed (Wi-Fi ↔ LTE, a new cell) or the page is back from the background: a dropped
+// link is picked up right away (an ICE restart on the same session) rather than after the loss
+// timer. On Android the connection type says so even before the link notices.
+function resumeLinkNow(reason) {
+  const pc = session && !session.closed && session.pc;
+  if (pc && (pc.connectionState === "disconnected" || pc.connectionState === "failed")) session.resumeLink(reason);
+}
+window.addEventListener("online", () => resumeLinkNow("네트워크 복귀"));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) resumeLinkNow("화면 복귀"); });
+if (navigator.connection && "type" in navigator.connection) {
+  let lastType = navigator.connection.type;
+  navigator.connection.addEventListener("change", () => {
+    const type = navigator.connection.type;
+    if (type === lastType) return;
+    lastType = type;
+    const pc = session && !session.closed && session.pc;
+    if (pc && pc.connectionState !== "closed") session.resumeLink(`네트워크 변경 (${type})`);
+  });
 }
 
 // ---------- Auto-reconnect ----------
@@ -2090,6 +2227,7 @@ function setKeyboard(on) {
   } else {
     ui.kbd.blur();
     ui.composeInput.blur();
+    releaseStickyModifiers();
   }
   updateKeyboardBar();
 }
@@ -2141,7 +2279,8 @@ for (const input of [ui.kbd, ui.composeInput]) {
   });
 }
 for (const button of ui.kbar.querySelectorAll(".seg button")) tapKeepingKeyboard(button, () => setKeyboardMode(button.dataset.mode));
-for (const button of ui.kbar.querySelectorAll("button.key")) tapKeepingKeyboard(button, () => keyTap(HID(button.dataset.key)));
+for (const button of ui.kbar.querySelectorAll("button.key[data-key]")) tapKeepingKeyboard(button, () => keyTap(HID(button.dataset.key)));
+for (const button of ui.kbar.querySelectorAll("button.mod")) tapKeepingKeyboard(button, () => toggleStickyModifier(HID(button.dataset.mod)));
 tapKeepingKeyboard(ui.composeEnter, () => keyTap(HID("Enter")));
 tapKeepingKeyboard(ui.composeSend, sendCompose);
 tapKeepingKeyboard(ui.composeUndo, eraseLastSent);
@@ -2192,7 +2331,44 @@ if (window.visualViewport) {
 function keyTap(code) {
   send({ t: "key", code, down: true });
   send({ t: "key", code, down: false });
+  releaseStickyModifiers();
 }
+
+// ⌘ ⌃ ⌥ ⇧ on the key bar: tapped, the modifier stays down on the Mac until the next key (a key
+// button, a typed character, a hardware key) or a second tap. "⌘ then c" is ⌘C.
+const stickyModifiers = new Set();
+function toggleStickyModifier(code) {
+  if (stickyModifiers.delete(code)) {
+    send({ t: "key", code, down: false });
+  } else {
+    stickyModifiers.add(code);
+    send({ t: "key", code, down: true });
+  }
+  showStickyModifiers();
+}
+function releaseStickyModifiers() {
+  if (!stickyModifiers.size) return;
+  for (const code of stickyModifiers) send({ t: "key", code, down: false });
+  stickyModifiers.clear();
+  showStickyModifiers();
+}
+function showStickyModifiers() {
+  for (const button of ui.kbar.querySelectorAll("button.mod")) {
+    const on = stickyModifiers.has(HID(button.dataset.mod));
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-pressed", String(on));
+  }
+}
+// A character typed on the on-screen keyboard while a modifier is held, as the key that types it
+// on a US layout (letters whichever case: ⇧ is its own button).
+const CHARACTER_KEYS = (() => {
+  const map = {};
+  for (let i = 0; i < 26; i++) map[String.fromCharCode(97 + i)] = map[String.fromCharCode(65 + i)] = "Key" + String.fromCharCode(65 + i);
+  for (let i = 0; i <= 9; i++) map[String(i)] = "Digit" + i;
+  Object.assign(map, { " ": "Space", "-": "Minus", "=": "Equal", "[": "BracketLeft", "]": "BracketRight", "\\": "Backslash",
+                       ";": "Semicolon", "'": "Quote", "`": "Backquote", ",": "Comma", ".": "Period", "/": "Slash" });
+  return map;
+})();
 
 const ownsKeys = (target) => target instanceof Node && (ui.sheet.contains(target) || target === ui.composeInput);
 
@@ -2220,7 +2396,7 @@ function syncModifiers(e) {
       heldModifiers.add(HID(left));
     } else if (!e[prop] && held) {
       for (const code of [HID(left), HID(right)]) {
-        if (heldModifiers.delete(code)) send({ t: "key", code, down: false });
+        if (!stickyModifiers.has(code) && heldModifiers.delete(code)) send({ t: "key", code, down: false });
       }
     }
   }
@@ -2239,6 +2415,8 @@ function releaseHeldKeys(sendTo = send) {
   for (const name of MODIFIER_CODES) sendTo({ t: "key", code: HID(name), down: false });
   hardwareKeys.clear();
   heldModifiers.clear();
+  stickyModifiers.clear();
+  showStickyModifiers();
 }
 
 // A physical keyboard while the on-screen keyboard's field has the focus (an iPad with a keyboard
@@ -2278,6 +2456,7 @@ window.addEventListener("keyup", (e) => {
     return;
   }
   send({ t: "key", code, down: false });
+  releaseStickyModifiers();
 });
 
 // Don't leave keys stuck on the Mac when the page loses the keyboard (another tab or app).
@@ -2306,7 +2485,14 @@ function flushSoftKeyboard() {
   } else if (value.length > SENTINEL.length) {
     const text = value.slice(SENTINEL.length);
     if (text === "\n") keyTap(HID("Enter"));
-    else send({ t: "text", s: text });
+    else if (stickyModifiers.size) {
+      // "⌘ then c" means ⌘C, not the letter c.
+      for (const character of text) {
+        const code = CHARACTER_KEYS[character] && HID(CHARACTER_KEYS[character]);
+        if (code) { send({ t: "key", code, down: true }); send({ t: "key", code, down: false }); }
+      }
+      releaseStickyModifiers();
+    } else send({ t: "text", s: text });
   }
   ui.kbd.value = SENTINEL;
 }
@@ -2330,6 +2516,24 @@ ui.btnMouse.addEventListener("click", () => {
   setPadPlacement(TP_PLACEMENTS[(TP_PLACEMENTS.indexOf(tpPlacement) + 1) % TP_PLACEMENTS.length]);
 });
 ui.btnFill.addEventListener("click", () => setFill(!view.fill));
+// Data saver: a smaller, slower, leaner stream for a metered link. The Mac then sends at most
+// 1600 px, 30 fps and 1.5 Mbps (a few hundred MB an hour at worst instead of ~1 GB). Remembered
+// once chosen; until then on by itself on a cellular link where the browser can tell (Android
+// Chrome; Safari can't).
+let saver = store.get("jump.saver") != null ? store.get("jump.saver") === "1"
+  : !!(navigator.connection && navigator.connection.type === "cellular");
+function setSaver(on, remember = true) {
+  saver = on;
+  if (remember) store.set("jump.saver", on ? "1" : "0");
+  ui.btnSaver.classList.toggle("on", on);
+  setTile(ui.btnSaver, "📶", on ? "절약 중" : "절약");
+  if (session && !session.closed) session.sendInput({ t: "saver", on });
+}
+setSaver(saver, false);
+ui.btnSaver.addEventListener("click", () => {
+  setSaver(!saver);
+  toast(saver ? "데이터 절약 켬: 최대 1600px · 30fps · 1.5Mbps" : "데이터 절약 끔");
+});
 // 한/영: HID LANG1, which the Mac turns into a switch of its input source (Korean ↔ the last
 // Latin layout), whatever its own shortcut for that is.
 ui.btnHanEng.addEventListener("click", () => {
@@ -2483,6 +2687,148 @@ function copyWithSelection(text) {
   if (active && active !== document.body && active.focus) active.focus({ preventScroll: true });
   return ok;
 }
+
+// ---------- Files ----------
+// 📎 (or a drop on the screen): what this device picks goes out on the `file` channel and lands in
+// the Mac's Downloads folder. Files copied on the Mac (⌘C in the Finder) are offered here with a
+// 받기 button. 16 KiB chunks, paced by the channel's buffered amount (PROTOCOL.md, Files).
+const FILE_CHUNK = 16 * 1024;
+const files = {
+  nextId: 1,
+  pending: [],      // File objects waiting to go
+  busy: false,
+  incoming: null,   // { id, name, size, chunks, received, index, count } from the Mac
+  offer: null,      // the Mac's fileOffer on show
+  onReceived: null, // tests: (blob, name) instead of the download
+
+  send(list) {
+    if (!list.length) return;
+    if (!session || session.closed || !session.fileChannel) return toast("연결된 뒤에 보낼 수 있습니다", 2500);
+    this.pending.push(...list);
+    if (!this.busy) this.pump();
+  },
+  async pump() {
+    this.busy = true;
+    while (this.pending.length) {
+      const file = this.pending.shift();
+      const channel = session && !session.closed && session.fileChannel;
+      if (!channel || channel.readyState !== "open") { toast(`보내지 못했습니다: ${file.name} (연결 없음)`, 3000); continue; }
+      const id = this.nextId++;
+      channel.send(JSON.stringify({ t: "file", id, name: file.name, size: file.size }));
+      let offset = 0, shown = 0;
+      try {
+        while (offset < file.size) {
+          if (channel.readyState !== "open") throw new Error("channel closed");
+          if (channel.bufferedAmount > 1 << 20) { await this.drained(channel); continue; }
+          const chunk = await file.slice(offset, offset + FILE_CHUNK).arrayBuffer();
+          channel.send(chunk);
+          offset += chunk.byteLength;
+          if (performance.now() - shown > 500) {
+            shown = performance.now();
+            toast(`보내는 중: ${file.name} ${Math.floor((offset / file.size) * 100)}%`, 2000);
+          }
+        }
+        channel.send(JSON.stringify({ t: "end", id }));
+        toast(`보냈습니다: ${file.name} — Mac이 저장하는 중…`, 3000);
+      } catch (err) {
+        console.warn("file send", err);
+        toast(`보내지 못했습니다: ${file.name}`, 3000);
+        try { channel.send(JSON.stringify({ t: "abort", id })); } catch {}
+      }
+    }
+    this.busy = false;
+  },
+  /** Resolves once the channel's buffer is down (or after a second: Safari may not say). */
+  drained(channel) {
+    return new Promise((resolve) => {
+      channel.bufferedAmountLowThreshold = 256 * 1024;
+      const done = () => { channel.removeEventListener("bufferedamountlow", done); resolve(); };
+      channel.addEventListener("bufferedamountlow", done);
+      setTimeout(done, 1000);
+    });
+  },
+  onChannelMessage(data) {
+    if (typeof data === "string") {
+      let message;
+      try { message = JSON.parse(data); } catch { return; }
+      if (message.t === "file") {
+        this.incoming = { id: message.id, name: message.name, size: message.size, chunks: [], received: 0,
+                          index: message.index || 0, count: message.count || 1 };
+        toast(`받는 중: ${message.name}`, 2000);
+      } else if (message.t === "end" && this.incoming) {
+        this.finishIncoming();
+      }
+      return;
+    }
+    const incoming = this.incoming;
+    if (!incoming) return;
+    incoming.chunks.push(data);
+    incoming.received += data.byteLength;
+  },
+  finishIncoming() {
+    const incoming = this.incoming;
+    this.incoming = null;
+    if (incoming.received !== incoming.size) return toast(`받지 못했습니다: ${incoming.name}`, 3000);
+    const blob = new Blob(incoming.chunks);
+    if (this.onReceived) return this.onReceived(blob, incoming.name);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = incoming.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    toast(`받았습니다: ${incoming.name}`, 3000);
+  },
+  onInput(message) {
+    if (message.t === "fileSaved") toast(`Mac 다운로드 폴더에 저장: ${message.name}`, 3500);
+    if (message.t === "fileError") toast(`파일: ${message.message}`, 4000);
+    if (message.t === "fileOffer") this.showOffer(message);
+  },
+  showOffer(message) {
+    if (!message.files || !message.files.length) return;
+    this.offer = message;
+    const total = message.files.reduce((sum, f) => sum + (f.size || 0), 0);
+    const names = message.files.length === 1 ? message.files[0].name : `${message.files[0].name} 외 ${message.files.length - 1}개`;
+    ui.fileOfferText.textContent = `Mac에서 복사한 파일: ${names} (${formatBytes(total)})`;
+    ui.fileOffer.classList.add("show");
+  },
+  get() {
+    const offer = this.offer;
+    this.hideOffer();
+    if (offer && session && !session.closed) session.sendInput({ t: "fileGet", id: offer.id });
+  },
+  hideOffer() {
+    this.offer = null;
+    ui.fileOffer.classList.remove("show");
+  },
+  reset() {
+    this.pending = [];
+    this.busy = false;
+    this.incoming = null;
+    this.hideOffer();
+  },
+};
+function formatBytes(n) {
+  return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(2)} GB`;
+}
+ui.btnFile.addEventListener("click", () => ui.filePick.click());
+ui.filePick.addEventListener("change", () => { files.send([...ui.filePick.files]); ui.filePick.value = ""; });
+ui.fileOfferGet.addEventListener("click", () => files.get());
+ui.fileOfferClose.addEventListener("click", () => files.hideOffer());
+// A file dragged onto the screen (a PC, a Mac) goes to the Mac too.
+for (const type of ["dragenter", "dragover"]) {
+  ui.viewer.addEventListener(type, (e) => {
+    if (!e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+}
+ui.viewer.addEventListener("drop", (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  files.send([...e.dataTransfer.files]);
+});
 
 // ---------- Monitors ----------
 function updateDisplayTile() {

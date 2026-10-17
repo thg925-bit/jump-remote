@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'hosts_store.dart';
 import 'session.dart';
+import 'app_version.dart';
 
 /// Viewer settings: the stats overlay, and changing the Mac's password without touching the Mac.
 class SettingsDialog extends StatefulWidget {
@@ -116,7 +117,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ? Colors.white60
         : theme.colorScheme.error;
     return AlertDialog(
-      title: const Text('설정'),
+      title: Text(appVersionLabel.isEmpty ? '설정' : '설정 · $appVersionLabel'),
       scrollable: true,
       content: SizedBox(
         width: 320,

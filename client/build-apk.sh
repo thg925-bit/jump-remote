@@ -14,7 +14,8 @@ OUT="$(cd .. && pwd)/dist/wherever-android-$VERSION.apk"
 
 mkdir -p "$WORK" "$(dirname "$OUT")"
 rsync -a --delete --exclude build --exclude .dart_tool --exclude .gradle --exclude '.idea' ./ "$WORK/"
-(cd "$WORK" && flutter build apk --release --split-per-abi --target-platform android-arm64)
+# APP_VERSION: shown on the connect page and in settings (lib/src/app_version.dart).
+(cd "$WORK" && flutter build apk --release --split-per-abi --target-platform android-arm64 --dart-define=APP_VERSION="$VERSION")
 cp "$WORK/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" "$OUT"
 
 if unzip -p "$OUT" 2>/dev/null | LC_ALL=C grep -a -q -e "$HOME" -e "/Users/$USER"; then
