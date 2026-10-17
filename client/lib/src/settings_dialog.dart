@@ -14,6 +14,9 @@ class SettingsDialog extends StatefulWidget {
     required this.onShareClipboard,
     required this.ctrlAsCmd,
     required this.onCtrlAsCmd,
+    required this.miniTools,
+    required this.miniChoices,
+    required this.onMiniTools,
   });
 
   final Session session;
@@ -22,12 +25,17 @@ class SettingsDialog extends StatefulWidget {
   final ValueChanged<bool> onShareClipboard;
   final bool ctrlAsCmd;
   final ValueChanged<bool> onCtrlAsCmd;
+  /// Which tiles stay when the toolbar is folded, by key, and the keys on offer with labels.
+  final Set<String> miniTools;
+  final Map<String, String> miniChoices;
+  final ValueChanged<Set<String>> onMiniTools;
 
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
 }
 
 class _SettingsDialogState extends State<SettingsDialog> {
+  late final Set<String> _miniTools = {...widget.miniTools};
   final _current = TextEditingController();
   final _next = TextEditingController();
   final _confirm = TextEditingController();
@@ -154,6 +162,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 widget.onCtrlAsCmd(on);
               },
             ),
+            const SizedBox(height: 8),
+            Text('접은 툴바에 표시', style: theme.textTheme.titleSmall?.copyWith(color: Colors.white70)),
+            for (final entry in widget.miniChoices.entries)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                visualDensity: VisualDensity.compact,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(entry.value),
+                value: _miniTools.contains(entry.key),
+                onChanged: (on) {
+                  setState(() => on == true ? _miniTools.add(entry.key) : _miniTools.remove(entry.key));
+                  widget.onMiniTools({..._miniTools});
+                },
+              ),
             const SizedBox(height: 8),
             Text('Mac 비밀번호 변경', style: theme.textTheme.titleSmall?.copyWith(color: Colors.white70)),
             const SizedBox(height: 10),

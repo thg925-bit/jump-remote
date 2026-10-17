@@ -56,8 +56,13 @@ class _ViewerPageState extends State<ViewerPage> {
   late final FileTransfer _files;
   bool _sharedChecked = false; // files from the share sheet go once the session is up
 
-  /// The toolbar folded away to two small corner buttons.
+  /// The toolbar folded away to a few small corner buttons: the ones picked under ⚙ 설정.
   bool _toolbarFolded = false;
+  Set<String> _miniTools = {'fill', 'close'};
+  static const _miniLabels = {
+    'mouse': '스틱 위치', 'touch': '화면 터치', 'rotation': '화면 회전', 'display': '모니터', 'fill': '맞춤 · 채움',
+    'saver': '데이터 절약', 'file': '파일', 'hanEng': '한/영', 'kbd': '키보드', 'sound': '소리', 'settings': '설정', 'close': '끊기',
+  };
   final _keyFocus = FocusNode(debugLabel: 'hardware-keys');
   final _textFocus = FocusNode(debugLabel: 'soft-keyboard');
   final _text = TextEditingController(text: _sentinel);
@@ -159,6 +164,7 @@ class _ViewerPageState extends State<ViewerPage> {
         _pointer.trackingSpeed = MacTrackpad.speeds[_speed]!.$2;
         _pointer.mode = prefs.getString('jump.touchMode') == 'trackpad' ? TouchMode.trackpad : TouchMode.direct;
         _toolbarFolded = prefs.getBool('jump.toolbarFolded') ?? false;
+        _miniTools = (prefs.getStringList('jump.miniTools') ?? const ['fill', 'close']).where(_miniLabels.containsKey).toSet();
         _rotation = _rotations.contains(prefs.getString('jump.rotation')) ? prefs.getString('jump.rotation')! : 'auto';
         _pointer.fill = prefs.getBool('jump.fill') ?? false;
         _session.shareClipboard = prefs.getBool('jump.clip') ?? true;
@@ -265,6 +271,12 @@ class _ViewerPageState extends State<ViewerPage> {
           }
           setState(() => _ctrlAsCmd = on);
           SharedPreferences.getInstance().then((prefs) => prefs.setBool('jump.ctrlAsCmd', on));
+        },
+        miniTools: _miniTools,
+        miniChoices: _miniLabels,
+        onMiniTools: (picked) {
+          setState(() => _miniTools = picked);
+          SharedPreferences.getInstance().then((prefs) => prefs.setStringList('jump.miniTools', picked.toList()));
         },
       ),
     );
@@ -486,42 +498,50 @@ class _ViewerPageState extends State<ViewerPage> {
 
   /// Landscape: a column in the black bar opposite the stick. Portrait: a row across the top.
   /// Solid when it sits in a bar, translucent when it has to overlap the Mac screen.
-  Widget _toolbar(ViewerLayout layout) {
+  /// The toolbar's tiles, in order; the folded toolbar shows the picked ones by key.
+  List<_ToolItem> _toolItems() {
     final muted = _session.audio.muted;
     final trackpad = _pointer.mode == TouchMode.trackpad;
-    final items = <_ToolItem>[
-      _ToolItem(Icons.chevron_left, '접기', false, () => _setToolbarFolded(true)),
+    return [
+      _ToolItem('fold', Icons.chevron_left, '접기', false, () => _setToolbarFolded(true)),
       _ToolItem(
+        'mouse',
         Icons.mouse,
         _stickCustom != null && _stickPlacement != 'hidden' ? '직접' : _placementLabels[_stickPlacement]!,
         _stickPlacement != 'hidden',
         _cycleStick,
       ),
-      _ToolItem(trackpad ? Icons.pan_tool : Icons.touch_app, trackpad ? '트랙\n패드' : '바로\n클릭', trackpad, _toggleTouchMode),
-      _ToolItem(Icons.screen_rotation, _rotationLabels[_rotation]!, _rotation != 'auto', _cycleRotation),
+      _ToolItem('touch', trackpad ? Icons.pan_tool : Icons.touch_app, trackpad ? '트랙\n패드' : '바로\n클릭', trackpad, _toggleTouchMode),
+      _ToolItem('rotation', Icons.screen_rotation, _rotationLabels[_rotation]!, _rotation != 'auto', _cycleRotation),
       if (_session.displays.length > 1)
-        _ToolItem(Icons.monitor, '모니터\n${_displayIndex() + 1}/${_session.displays.length}', false, _nextDisplay),
+        _ToolItem('display', Icons.monitor, '모니터\n${_displayIndex() + 1}/${_session.displays.length}', false, _nextDisplay),
       _ToolItem(
+        'fill',
         _pointer.fill ? Icons.crop_free : Icons.fit_screen,
         _pointer.fill ? '채움' : '맞춤',
         _pointer.fill,
         _toggleFill,
       ),
-      _ToolItem(Icons.data_saver_on, _session.saver ? '절약 중' : '데이터\n절약', _session.saver, _toggleSaver),
-      _ToolItem(Icons.attach_file, '파일', false, _pickAndSendFiles),
-      _ToolItem(Icons.translate, '한/영', false, _switchInputSource),
-      _ToolItem(Icons.keyboard, '키보드', _keyboardOn, _toggleKeyboard),
+      _ToolItem('saver', Icons.data_saver_on, _session.saver ? '절약 중' : '데이터\n절약', _session.saver, _toggleSaver),
+      _ToolItem('file', Icons.attach_file, '파일', false, _pickAndSendFiles),
+      _ToolItem('hanEng', Icons.translate, '한/영', false, _switchInputSource),
+      _ToolItem('kbd', Icons.keyboard, '키보드', _keyboardOn, _toggleKeyboard),
       // Names where sound comes out; the host mutes the Mac while we play.
       _ToolItem(
+        'sound',
         muted ? Icons.laptop_mac : Icons.volume_up,
         muted ? '${_session.macLabel}\n재생' : '$_deviceLabel\n재생',
         !muted,
         _toggleSound,
       ),
-      if (_pointer.isZoomed && !_pointer.fill) _ToolItem(Icons.zoom_in_map, '원래\n크기', false, _pointer.resetZoom),
-      _ToolItem(Icons.settings, '설정', false, _openSettings),
-      _ToolItem(Icons.close, '끊기', false, () => _leave()),
+      if (_pointer.isZoomed && !_pointer.fill) _ToolItem('zoom', Icons.zoom_in_map, '원래\n크기', false, _pointer.resetZoom),
+      _ToolItem('settings', Icons.settings, '설정', false, _openSettings),
+      _ToolItem('close', Icons.close, '끊기', false, () => _leave()),
     ];
+  }
+
+  Widget _toolbar(ViewerLayout layout) {
+    final items = _toolItems();
     final size = _viewSize;
     final safe = MediaQuery.paddingOf(context);
     final bounds = Rect.fromLTRB(
@@ -759,11 +779,18 @@ class _ViewerPageState extends State<ViewerPage> {
     SharedPreferences.getInstance().then((prefs) => prefs.setBool('jump.toolbarFolded', folded));
   }
 
-  /// The folded toolbar: 맞춤↔채움 and unfold, in a bottom corner clear of the stick.
+  /// The folded toolbar: the tiles picked under ⚙ 설정 as small buttons, plus one to unfold, in a
+  /// bottom corner clear of the stick; a long pick wraps onto more lines.
   Widget _toolbarMini(Size size, ViewerLayout layout, bool connected) {
-    const button = 44.0, pad = 4.0;
-    const width = 2 * button + 2 * pad + 2, height = button + 2 * pad;
+    const button = 44.0, pad = 4.0, gap = 2.0;
+    final picked = _toolItems().where((item) => _miniTools.contains(item.key)).toList();
+    final count = picked.length + 1;
     final safe = MediaQuery.paddingOf(context);
+    final maxWidth = size.width - safe.left - safe.right - 16;
+    final perLine = ((maxWidth - 2 * pad + gap) / (button + gap)).floor().clamp(1, count);
+    final lines = (count / perLine).ceil();
+    final width = perLine * button + (perLine - 1) * gap + 2 * pad;
+    final height = lines * button + (lines - 1) * gap + 2 * pad;
     final top = size.height - safe.bottom - (_keyboardOn ? _keyboardBarHeight : 0) - 8 - height;
     final right = size.width - safe.right - 8 - width, left = safe.left + 8;
     final stick = connected && _stickPlacement != 'hidden' ? layout.stick : null;
@@ -792,13 +819,17 @@ class _ViewerPageState extends State<ViewerPage> {
         ),
         child: Padding(
           padding: const EdgeInsets.all(pad),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              mini(_pointer.fill ? Icons.crop_free : Icons.fit_screen, _pointer.fill ? '맞춤으로' : '채우기', _pointer.fill, _toggleFill),
-              const SizedBox(width: 2),
-              mini(Icons.menu, '도구 막대 펼치기', false, () => _setToolbarFolded(false)),
-            ],
+          child: SizedBox(
+            width: width - 2 * pad,
+            child: Wrap(
+              spacing: gap,
+              runSpacing: gap,
+              alignment: WrapAlignment.end,
+              children: [
+                for (final item in picked) mini(item.icon, item.label.replaceAll('\n', ' '), item.active, item.onTap),
+                mini(Icons.menu, '도구 막대 펼치기', false, () => _setToolbarFolded(false)),
+              ],
+            ),
           ),
         ),
       ),
@@ -1281,7 +1312,9 @@ class _ViewerPageState extends State<ViewerPage> {
 
 /// One toolbar button: what it shows and what it does.
 class _ToolItem {
-  const _ToolItem(this.icon, this.label, this.active, this.onTap);
+  const _ToolItem(this.key, this.icon, this.label, this.active, this.onTap);
+  /// Names the tile in the folded-toolbar pick (⚙ 설정).
+  final String key;
   final IconData icon;
   final String label;
   final bool active;

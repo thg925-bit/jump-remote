@@ -97,6 +97,8 @@
   #sheet h2 { margin: 0; font-size: 17px; }
   #sheet h3 { margin: 4px 0 0; font-size: 13px; font-weight: 600; color: var(--muted); }
   #sheet .row { display: flex; justify-content: space-between; align-items: center; }
+  #sheet .picks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+  #sheet .picks label { display: flex; align-items: center; gap: 8px; font-size: 14px; }
   #sheet input[type=checkbox] { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
   #sheet select { font: inherit; font-size: 16px; color: var(--text); background: var(--bg); border: 1px solid var(--line);
     border-radius: 8px; padding: 6px; max-width: 62%; }
@@ -192,7 +194,7 @@
 
   /* Toolbar folded away: two small buttons in a bottom corner (맞춤/채움, and unfold). */
   #viewer[data-toolbar-collapsed="true"] #toolbar { display: none !important; }
-  #toolbarMini { position: absolute; display: flex; gap: 2px; padding: 4px; border-radius: 14px;
+  #toolbarMini { position: absolute; display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 16px); gap: 2px; padding: 4px; border-radius: 14px;
     background: rgba(22,26,32,.78); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 6px 20px rgba(0,0,0,.22);
     backdrop-filter: blur(10px) saturate(1.2); -webkit-backdrop-filter: blur(10px) saturate(1.2); }
   #toolbarMini[hidden] { display: none; }
@@ -221,10 +223,7 @@
     <div id="cursor"><img id="cursorImg" alt=""></div>
   </div>
   <div id="surface"></div>
-  <div id="toolbarMini" role="group" aria-label="화면 제어" hidden>
-    <button id="btnMiniFill" type="button" aria-pressed="false" title="화면 채우기">⤢</button>
-    <button id="btnMiniOpen" type="button" aria-label="도구 막대 펼치기" title="도구 막대 펼치기">☰</button>
-  </div>
+  <div id="toolbarMini" role="group" aria-label="화면 제어" hidden></div>
   <div id="toolbar">
     <button id="btnFold" class="tile" type="button" aria-label="도구 막대 접기"><i>‹</i><span>접기</span></button>
     <button id="btnMouse" class="tile" type="button"><i>🖱</i><span>오른쪽</span></button>
@@ -287,6 +286,8 @@
     <label class="row"><span>클립보드 공유 (복사·붙여넣기)</span><input id="optClip" type="checkbox"></label>
     <label class="row"><span>Ctrl을 ⌘처럼 (윈도우 키보드)</span><input id="optCtrlCmd" type="checkbox"></label>
     <label class="row"><span>화면 터치</span><select id="optTouchMode"><option value="direct">바로 클릭</option><option value="trackpad">트랙패드</option></select></label>
+    <h3>접은 툴바에 표시</h3>
+    <div id="miniPick" class="picks"></div>
     <h3>Mac 비밀번호 변경</h3>
     <span class="pw"><input id="pwCurrent" type="password" placeholder="현재 비밀번호" autocomplete="current-password" autocapitalize="off" spellcheck="false"><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span>
     <span class="pw"><input id="pwNew" type="password" placeholder="새 비밀번호 (8자 이상)" autocomplete="new-password" autocapitalize="off" spellcheck="false"><button class="eye" type="button" aria-label="비밀번호 보기" aria-pressed="false"></button></span>
@@ -392,8 +393,8 @@ const HID = (() => {
 const $ = (id) => document.getElementById(id);
 const ui = {
   connect: $("connect"), form: $("form"), host: $("host"), password: $("password"), go: $("go"), status: $("status"),
-  remember: $("remember"), optTouchMode: $("optTouchMode"), toolbarMini: $("toolbarMini"), btnMiniFill: $("btnMiniFill"),
-  btnMiniOpen: $("btnMiniOpen"), btnFold: $("btnFold"), btnHanEng: $("btnHanEng"), btnTouch: $("btnTouch"),
+  remember: $("remember"), optTouchMode: $("optTouchMode"), toolbarMini: $("toolbarMini"), miniPick: $("miniPick"),
+  btnFold: $("btnFold"), btnHanEng: $("btnHanEng"), btnTouch: $("btnTouch"),
   touchRing: $("touchRing"),
   viewer: $("viewer"), video: $("screen"), surface: $("surface"), toolbar: $("toolbar"), stats: $("stats"),
   kbd: $("kbd"), compose: $("compose"), banner: $("banner"), kbar: $("kbar"), kbarPreview: $("kbarPreview"),
@@ -1332,7 +1333,7 @@ function setFill(on) {
   store.set("jump.fill", on ? "1" : "0");
   setTile(ui.btnFill, on ? "⤡" : "⤢", on ? "채움" : "맞춤");
   ui.btnFill.classList.toggle("on", on);
-  syncMiniFill();
+  refreshToolbarMini();
   if (on && !keyboardOn()) {
     const r = videoRect();
     const area = usableViewport();
@@ -2164,14 +2165,63 @@ if (window.visualViewport) {
 }
 
 // ---------- Folding the toolbar ----------
-// "접기" hides the toolbar; two small buttons stay in a bottom corner, clear of the stick:
-// 맞춤↔채움 and one to bring the toolbar back. Remembered.
-function syncMiniFill() {
-  const label = view.fill ? "전체 화면 맞춤" : "화면 채우기";
-  ui.btnMiniFill.textContent = view.fill ? "⤡" : "⤢";
-  ui.btnMiniFill.setAttribute("aria-label", label);
-  ui.btnMiniFill.setAttribute("aria-pressed", String(view.fill));
-  ui.btnMiniFill.title = label;
+// "접기" hides the toolbar; the tiles picked under ⚙ 설정 stay as small buttons in a bottom corner,
+// clear of the stick, with ☰ to bring the toolbar back. A small button is its tile: same icon,
+// label, state and action. Both the fold and the pick are remembered.
+const MINI_TOOLS = [
+  ["mouse", "btnMouse", "스틱 위치"], ["touch", "btnTouch", "화면 터치"], ["speed", "btnSpeed", "스틱 속도"],
+  ["display", "btnDisplay", "모니터"], ["fill", "btnFill", "맞춤 · 채움"], ["saver", "btnSaver", "데이터 절약"],
+  ["file", "btnFile", "파일"], ["hanEng", "btnHanEng", "한/영"], ["kbd", "btnKbd", "키보드"], ["sound", "btnSound", "소리"],
+  ["settings", "btnSettings", "설정"], ["full", "btnFull", "전체화면"], ["close", "btnClose", "끊기"],
+];
+const MINI_DEFAULT = ["fill", "close"];
+let miniTools = (store.get("jump.miniTools") ?? MINI_DEFAULT.join(",")).split(",").filter((key) => MINI_TOOLS.some(([k]) => k === key));
+function renderToolbarMini() {
+  ui.toolbarMini.replaceChildren();
+  for (const [key, id] of MINI_TOOLS) {
+    const tile = ui[id];
+    if (!miniTools.includes(key) || tile.style.display === "none") continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.tool = key;
+    button.textContent = tile.querySelector("i").textContent;
+    button.title = tile.querySelector("span").textContent;
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-pressed", String(tile.classList.contains("on")));
+    tapKeepingKeyboard(button, () => tile.click());
+    ui.toolbarMini.append(button);
+  }
+  const open = document.createElement("button");
+  open.type = "button";
+  open.textContent = "☰";
+  open.title = "도구 막대 펼치기";
+  open.setAttribute("aria-label", open.title);
+  tapKeepingKeyboard(open, () => setToolbarFolded(false));
+  ui.toolbarMini.append(open);
+  placeToolbarMini();
+}
+function refreshToolbarMini() {
+  if (!ui.toolbarMini.hidden) renderToolbarMini();
+}
+// Tiles change (a label, an "on" state, one hidden or shown): the small buttons follow.
+let miniRefresh = 0;
+new MutationObserver(() => {
+  if (ui.toolbarMini.hidden || miniRefresh) return;
+  miniRefresh = requestAnimationFrame(() => { miniRefresh = 0; renderToolbarMini(); });
+}).observe(ui.toolbar, { subtree: true, attributes: true, attributeFilter: ["class", "style"], childList: true, characterData: true });
+// ⚙ 설정: which tiles stay when folded.
+for (const [key, , label] of MINI_TOOLS) {
+  const row = document.createElement("label");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = miniTools.includes(key);
+  box.addEventListener("change", () => {
+    miniTools = MINI_TOOLS.map(([k]) => k).filter((k) => (k === key ? box.checked : miniTools.includes(k)));
+    store.set("jump.miniTools", miniTools.join(","));
+    refreshToolbarMini();
+  });
+  row.append(box, document.createTextNode(label));
+  ui.miniPick.append(row);
 }
 
 function placeToolbarMini() {
@@ -2179,7 +2229,7 @@ function placeToolbarMini() {
   const area = usableViewport();
   const safe = safeInsets();
   const box = ui.toolbarMini.getBoundingClientRect();
-  const w = box.width || 102, h = box.height || 54;
+  const w = box.width || 54, h = box.height || 54;
   const left = area.left + Math.max(8, safe.left);
   const right = Math.max(left, area.left + area.width - w - Math.max(8, safe.right));
   const y = Math.max(area.top + Math.max(8, safe.top), area.top + area.height - h - Math.max(8, safe.bottom));
@@ -2194,11 +2244,9 @@ function setToolbarFolded(folded) {
   ui.toolbarMini.hidden = !folded;
   store.set("jump.toolbarCollapsed", folded ? "1" : "0");
   layoutViewer();
-  placeToolbarMini();
+  if (folded) renderToolbarMini();
 }
 ui.btnFold.addEventListener("click", () => setToolbarFolded(true));
-tapKeepingKeyboard(ui.btnMiniOpen, () => setToolbarFolded(false));
-tapKeepingKeyboard(ui.btnMiniFill, () => setFill(!view.fill));
 ui.video.addEventListener("resize", () => { refitView(); layoutViewer(); drawCursor(); });
 
 // ---------- Keyboard ----------
@@ -2586,7 +2634,7 @@ ui.btnTouch.addEventListener("click", () => {
   toast(TOUCH_MODES[touchMode].hint, 2500);
 });
 setTouchMode(touchMode);
-syncMiniFill();
+refreshToolbarMini();
 setToolbarFolded(store.get("jump.toolbarCollapsed") === "1");
 
 // ---------- Toast ----------
